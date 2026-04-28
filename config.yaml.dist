@@ -1,0 +1,45 @@
+# config.yaml
+hue:
+  bridge_ip: "192.168.1.1"
+  rooms:
+    - name: "Living"
+      group_id: 1
+    - name: "Bedroom"
+      group_id: 2
+    - name: "Kitchen"
+      group_id: 3
+  scenes:
+    - name: "Relax"
+      group_id: 1
+      scene_id: "abc123"
+      color: [255, 147, 41]
+    - name: "Focus"
+      group_id: 1
+      scene_id: "def456"
+      color: [200, 200, 255]
+
+kasa:
+  devices:
+    - name: "Heater"
+      host: "192.168.1.2"
+    - name: "Fan"
+      host: "192.168.1.3"
+
+tapo:
+  email: "YOUR_TAPO_EMAIL"
+  password: "YOUR_TAPO_PASSWORD"
+  devices:
+    - name: "Lamp 1"
+      host: "192.168.1.30"
+    - name: "Strip 1"
+      host: "192.168.1.31"
+
+spotify:
+  client_id: "YOUR_CLIENT_ID"
+  client_secret: "YOUR_CLIENT_SECRET"
+  redirect_uri: "http://localhost:8888/callback"
+  playlists:
+    - name: "Chill"
+      uri: "spotify:playlist:xxxxx"
+    - name: "Work"
+      uri: "spotify:playlist:yyyyy"
