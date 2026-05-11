@@ -107,6 +107,51 @@ class SpotifyMpris:
             return variant[1]
         return variant
 
+    # --- write API (silent no-op if Spotify isn't running) ---
+
+    def _player_call(self, member: str):
+        addr = DBusAddress(MPRIS_PATH, bus_name=SPOTIFY_BUS,
+                           interface=PLAYER_IFACE)
+        try:
+            self._conn.send_and_get_reply(new_method_call(addr, member))
+        except Exception:
+            pass
+
+    def _set_prop(self, name: str, signature: str, value):
+        try:
+            msg = new_method_call(
+                _PROPS, "Set", "ssv",
+                (PLAYER_IFACE, name, (signature, value)),
+            )
+            self._conn.send_and_get_reply(msg)
+        except Exception:
+            pass
+
+    def play_pause(self):
+        self._player_call("PlayPause")
+
+    def next(self):
+        self._player_call("Next")
+
+    def previous(self):
+        self._player_call("Previous")
+
+    def toggle_shuffle(self):
+        self._set_prop("Shuffle", "b", not self.snapshot().shuffle)
+
+    def set_loop(self, mode: str):
+        if mode in ("None", "Track", "Playlist"):
+            self._set_prop("LoopStatus", "s", mode)
+
+    def cycle_loop(self):
+        cycle = {"None": "Playlist", "Playlist": "Track", "Track": "None"}
+        self.set_loop(cycle.get(self.snapshot().loop, "None"))
+
+    def nudge_volume(self, delta: float):
+        current = self.snapshot().volume
+        new = max(0.0, min(1.0, current + delta))
+        self._set_prop("Volume", "d", new)
+
 
 class SpotifyPage(BasePage):
     def __init__(self, controller):
@@ -140,10 +185,38 @@ class SpotifyPage(BasePage):
         )
         self.ctrl.set_key_image(9, "prev.png")
         self.ctrl.set_key_image(10, "next.png")
-        self.ctrl.set_key_image(11, "shuffle.png")
-        self.ctrl.set_key_image(12, "repeat.png")
+        self.ctrl.set_key_image(
+            11, "shuffle.png",
+            highlight=(30, 215, 96) if snap.shuffle else None,
+        )
+
+        repeat_icon = "repeat_one.png" if snap.loop == "Track" else "repeat.png"
+        repeat_highlight = (30, 215, 96) if snap.loop in ("Playlist", "Track") else None
+        self.ctrl.set_key_image(12, repeat_icon, highlight=repeat_highlight)
+
         self.ctrl.set_key_image(BUTTON_POSITION_VOLUME_DOWN, "vol_down.png")
         self.ctrl.set_key_image(BUTTON_POSITION_VOLUME_UP, "vol_up.png")
 
+        if snap.artist:
+            self.ctrl.set_key_image(15, label=snap.artist[:12], color=(30, 215, 96))
+        if snap.title:
+            self.ctrl.set_key_image(23, label=snap.title[:12], color=(30, 215, 96))
+        if snap.album:
+            self.ctrl.set_key_image(31, label=snap.album[:12], color=(30, 215, 96))
+
     def on_key(self, key):
-        del key  # wired in Task 4
+        mpris = self._mpris
+        if mpris is None:
+            return
+        actions = {
+            8: mpris.play_pause,
+            9: mpris.previous,
+            10: mpris.next,
+            11: mpris.toggle_shuffle,
+            12: mpris.cycle_loop,
+            BUTTON_POSITION_VOLUME_DOWN: lambda: mpris.nudge_volume(-0.05),
+            BUTTON_POSITION_VOLUME_UP: lambda: mpris.nudge_volume(+0.05),
+        }
+        if key in actions:
+            actions[key]()
+            self.render()  # immediate UI feedback; listener will also fire
