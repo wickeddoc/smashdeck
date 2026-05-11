@@ -50,7 +50,7 @@ ruff check .
 - **HuePage / KasaPage / TapoPage** — row 2 lists devices/rooms; tap to toggle (Hue also surfaces lights of the selected room on row 3).
 
 ### Key Layout Convention
-Keys are numbered 0–31 (4 rows × 8 columns, left-to-right, top-to-bottom). Keys 0–4 are a persistent global nav bar (Home, Spotify, Hue, Kasa, Tapo), defined by `NAV_KEYS` in `main.py`. Keys 5–7 are reserved/blank. Keys 8–31 are the page's content area (rows 2–4).
+Keys are numbered 0–31 (4 rows × 8 columns, left-to-right, top-to-bottom). Keys 0–4 are a persistent global nav bar (Home, Spotify, Hue, Kasa, Tapo), defined by `NAV_KEYS` in `main.py`. Keys 5–6 are reserved/blank. Key 7 is a Restart button (`RESTART_KEY` in `main.py`) that re-execs the process in place via `os.execv` after a clean deck reset. Keys 8–31 are the page's content area (rows 2–4).
 
 ### Configuration (`config.yaml`)
 YAML file with sections for `hue`, `kasa`, and `spotify`. Contains device IPs, room/scene definitions, and Spotify OAuth credentials. New integrations should add their config section here.

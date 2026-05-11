@@ -21,6 +21,8 @@ NAV_KEYS = {
     4: ("tapo", "tapo.png", "Tapo"),
 }
 
+RESTART_KEY = 7
+
 
 class DeckController:
     def __init__(self, config_path="config.yaml"):
@@ -132,6 +134,8 @@ class DeckController:
                 page_name, icon, label = NAV_KEYS[key]
                 highlight = (50, 50, 80) if page_name == active else None
                 self.set_key_image(key, icon, label, color=highlight or (0, 0, 0))
+            elif key == RESTART_KEY:
+                self.set_key_image(key, "refresh.png", "Restart")
             else:
                 self.set_key_image(key, color=(0, 0, 0))
 
@@ -190,9 +194,26 @@ class DeckController:
             page_name = NAV_KEYS[key][0]
             self.switch_page(page_name)
             return
+        if key == RESTART_KEY:
+            self._restart()
+            return
         # Content area: delegate to current page
         if self.current_page:
             self.current_page.on_key(key)
+
+    def _restart(self):
+        """Re-exec the running process in place after resetting the deck."""
+        print("\nRestarting...")
+        try:
+            if self.current_page:
+                self.current_page.deactivate()
+            self.deck.reset()
+            self.deck.close()
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 if __name__ == "__main__":
