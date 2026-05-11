@@ -258,7 +258,8 @@ class SpotifyPage(BasePage):
         stop = self._stop
         props_q = self._props_q
         name_q = self._name_q
-        if stop is None or props_q is None or name_q is None:
+        mpris = self._mpris
+        if stop is None or props_q is None or name_q is None or mpris is None:
             return
         while not stop.is_set():
             got_signal = False
@@ -282,10 +283,10 @@ class SpotifyPage(BasePage):
             except Empty:
                 pass
 
-            if not got_signal or self._mpris is None:
+            if not got_signal:
                 continue
             try:
-                snap = self._mpris.snapshot()
+                snap = mpris.snapshot()
                 if force or snap != self._last_state:
                     self.render(snap)
             except Exception:
