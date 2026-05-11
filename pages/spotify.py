@@ -7,8 +7,10 @@ exposes a single `snapshot()` returning all player state in one round-trip.
 
 from __future__ import annotations
 
+import io
 import threading
 import traceback
+import urllib.request
 from dataclasses import dataclass
 from queue import Empty
 from typing import Optional
@@ -16,6 +18,7 @@ from typing import Optional
 from jeepney import DBusAddress, MatchRule, new_method_call
 from jeepney.bus_messages import message_bus
 from jeepney.io.threading import open_dbus_connection, DBusRouter
+from PIL import Image
 
 from pages import BasePage
 
@@ -219,6 +222,21 @@ class SpotifyPage(BasePage):
         self._props_q = None
         self._name_cm = None
         self._name_q = None
+        self._art_url: str = ""
+        self._art_image: Optional[Image.Image] = None
+
+    @staticmethod
+    def _fetch_art(url: str) -> Optional[Image.Image]:
+        """Fetch and decode a cover-art image. Returns None on any failure."""
+        if not url:
+            return None
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = resp.read()
+            return Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception:
+            traceback.print_exc()
+            return None
 
     def activate(self):
         self._mpris = SpotifyMpris()
