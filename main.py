@@ -147,7 +147,7 @@ class DeckController:
             (
                 Image.open(os.path.join(ASSETS_PATH, icon_filename))
                 if icon_filename
-                else Image.new("RGB", (72, 72), color)
+                else Image.new("RGB", self._key_size, color)
             ),
             margins=[0, 0, 20 if label else 0, 0],
         )
