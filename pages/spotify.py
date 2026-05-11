@@ -3,7 +3,6 @@
 
 A small page-private `SpotifyMpris` helper owns one DBus connection and
 exposes a single `snapshot()` returning all player state in one round-trip.
-This task implements only PlaybackStatus; subsequent tasks expand it.
 """
 
 from __future__ import annotations
@@ -62,9 +61,39 @@ class SpotifyMpris:
             reply = self._conn.send_and_get_reply(msg)
             props = reply.body[0]  # a{sv}: dict[str, (sig, value)]
             snap = PlayerSnapshot()
+
             status = self._unwrap(props.get("PlaybackStatus"))
             if isinstance(status, str):
                 snap.status = status
+
+            shuffle = self._unwrap(props.get("Shuffle"))
+            if isinstance(shuffle, bool):
+                snap.shuffle = shuffle
+
+            loop = self._unwrap(props.get("LoopStatus"))
+            if isinstance(loop, str):
+                snap.loop = loop
+
+            volume = self._unwrap(props.get("Volume"))
+            if isinstance(volume, (int, float)):
+                snap.volume = float(volume)
+
+            meta = self._unwrap(props.get("Metadata"))
+            if isinstance(meta, dict):
+                artist_val = self._unwrap(meta.get("xesam:artist"))
+                if isinstance(artist_val, list):
+                    snap.artist = ", ".join(str(a) for a in artist_val)
+                elif isinstance(artist_val, str):
+                    snap.artist = artist_val
+
+                title_val = self._unwrap(meta.get("xesam:title"))
+                if isinstance(title_val, str):
+                    snap.title = title_val
+
+                album_val = self._unwrap(meta.get("xesam:album"))
+                if isinstance(album_val, str):
+                    snap.album = album_val
+
             return snap
         except Exception:
             return PlayerSnapshot()
