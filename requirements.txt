@@ -1,0 +1,7 @@
+streamdeck
+Pillow
+PyYAML
+phue
+python-kasa
+tapo
+jeepney
