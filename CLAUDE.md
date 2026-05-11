@@ -15,10 +15,14 @@ python device_info.py   # Print diagnostic info about connected Stream Decks
 
 ## Regenerating Icons
 
-Icons are 72x72 PNGs generated with Pillow. The generator script outputs to a hardcoded path — update `OUT` in the script before running:
+Icons are 144×144 PNGs (Stream Deck XL native resolution) generated with
+Pillow. The Stream Deck library downscales them automatically at render time
+for smaller models (Original / Mini / Mk.2). Output directory is `icons/`.
 
 ```bash
-python icons/generate_icons.py
+python generate_icons.py                  # default: 144×144
+ICON_SIZE=72 python generate_icons.py     # for Original / Mini, if you want
+                                          # a pre-sized set on disk
 ```
 
 ## Linting
