@@ -9,8 +9,9 @@ SmashDeck is a Python application that drives an Elgato Stream Deck XL as a home
 ## Running
 
 ```bash
-python main.py          # Run the app (requires a connected Stream Deck)
-python device_info.py   # Print diagnostic info about connected Stream Decks
+pip install -r requirements.txt    # one-time, into a venv
+python main.py                     # run the app (requires a connected Stream Deck)
+python device_info.py              # print diagnostic info about connected Stream Decks
 ```
 
 ## Regenerating Icons
@@ -45,7 +46,7 @@ ruff check .
 - Each page subclass controls keys 8–31; keys 0–7 are owned by the controller's nav bar.
 - Pages navigate between each other via `self.ctrl.switch_page("page_name")`.
 - **HomePage** (`pages/home.py`) — empty content area; navigation is provided by the persistent nav bar.
-- **SpotifyPage** (`pages/spotify.py`) — Controls Spotify playback via DBus/MPRIS2 (play/pause, next, prev, shuffle, volume).
+- **SpotifyPage** (`pages/spotify.py`) — Controls Spotify playback via DBus/MPRIS2 (play/pause, next, prev, shuffle, repeat, volume). Renders the current track's album cover on key 31, fetched from `mpris:artUrl` via stdlib `urllib.request`. A background thread subscribes to `PropertiesChanged` so the page reflects external state changes (track skips in the Spotify app, etc.) automatically.
 - **HuePage / KasaPage / TapoPage** — row 2 lists devices/rooms; tap to toggle (Hue also surfaces lights of the selected room on row 3).
 
 ### Key Layout Convention

@@ -11,21 +11,24 @@ SmashDeck renders icon + label keys onto a Stream Deck XL and routes key presses
 | Page    | Backend                              | Status      |
 |---------|--------------------------------------|-------------|
 | Home    | —                                    | Implemented |
-| Spotify | `playerctl` (system binary)          | Implemented |
+| Spotify | DBus / MPRIS2 (`jeepney`)            | Implemented |
 | Hue     | `phue` (Philips Hue bridge)          | Implemented |
 | Kasa    | `python-kasa` (TP-Link Kasa)         | Implemented |
 | Tapo    | `tapo` SDK (TP-Link Tapo)            | Implemented |
 | Heos    | DENON Heos                           | Planned     |
 
+The Spotify page renders the current track's album cover on key 31 and updates automatically on track changes (via `org.mpris.MediaPlayer2.spotify` PropertiesChanged signals).
+
 ## Requirements
 
-- A connected Stream Deck XL (32 keys, 4×8)
-- Python 3 with: `streamdeck`, `Pillow`, `PyYAML`, `phue`, `python-kasa`, `tapo`
-- `playerctl` available on `$PATH` (for the Spotify page)
+- A connected Stream Deck XL (32 keys, 4×8). Smaller models (Original / Mini / Mk.2) work too — icons are auto-scaled by the Stream Deck library at render time.
+- Python 3, with deps from `requirements.txt`: `streamdeck`, `Pillow`, `PyYAML`, `phue`, `python-kasa`, `tapo`, `jeepney`.
+- A running D-Bus session bus (standard on any Linux desktop) for the Spotify page.
 
 ## Setup
 
 ```bash
+pip install -r requirements.txt        # ideally into a virtualenv
 cp config.yaml.dist config.yaml
 # edit config.yaml: Hue bridge IP, Kasa/Tapo device hosts, Tapo credentials,
 # Spotify OAuth client id/secret/redirect, playlists, rooms, scenes
@@ -55,11 +58,16 @@ config.yaml        Local config (gitignored — see config.yaml.dist)
 pages/
   __init__.py      BasePage ABC (render / on_key / activate / deactivate / clear)
   home.py          HomePage — empty content area
-  spotify.py       SpotifyPage — playerctl: play/pause, next, prev, shuffle, vol
+  spotify.py       SpotifyPage — DBus/MPRIS2 via jeepney: play/pause, next,
+                   prev, shuffle, repeat, volume, cover art on key 31, with a
+                   PropertiesChanged signal listener for auto-refresh
   hue.py           HuePage — rooms (row 2) + lights of selected room (row 3)
   kasa.py          KasaPage — toggle Kasa devices
   tapo.py          TapoPage — toggle Tapo devices
-icons/             72×72 PNG key icons + generate_icons.py (Pillow generator)
+icons/             144×144 PNG key icons (XL native; auto-downscaled for
+                   smaller decks)
+generate_icons.py  Pillow icon generator
+requirements.txt   pip dependencies
 ```
 
 ## Adding a new page
@@ -71,10 +79,12 @@ icons/             72×72 PNG key icons + generate_icons.py (Pillow generator)
 
 ## Regenerating icons
 
-`generate_icons.py` produces the 72×72 PNGs into `./icons/` (created if missing):
+`generate_icons.py` produces 144×144 PNGs (Stream Deck XL native) into `./icons/` (created if missing). Smaller decks downscale automatically at render time.
 
 ```bash
-python generate_icons.py    # writes to ./icons/
+python generate_icons.py                  # default: 144×144
+ICON_SIZE=72 python generate_icons.py     # for Original / Mini, if you want
+                                          # a pre-sized set on disk
 ```
 
 ## Linting
