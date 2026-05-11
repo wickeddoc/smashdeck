@@ -238,12 +238,28 @@ class SpotifyPage(BasePage):
             traceback.print_exc()
             return None
 
+    def _refresh_art(self, snap: PlayerSnapshot) -> bool:
+        """Refetch cover art if the snapshot's URL differs from the cached one.
+
+        Returns True if the cache was updated, False if the URL was unchanged.
+        Note: ``_art_url`` is set even on fetch failure, so we won't retry
+        until the URL actually changes again.
+        """
+        if snap.art_url != self._art_url:
+            self._art_url = snap.art_url
+            self._art_image = self._fetch_art(snap.art_url)
+            return True
+        return False
+
     def activate(self):
         self._mpris = SpotifyMpris()
         self._stop = threading.Event()
         self._props_cm, self._props_q = self._mpris.subscribe(_props_rule())
         self._name_cm, self._name_q = self._mpris.subscribe(_name_owner_rule())
         self._last_state = self._mpris.snapshot()
+        # Initial render shows controls + labels with key 31 blank. The listener
+        # thread fetches the cover art and re-renders, so activate() doesn't
+        # block the main thread on the HTTPS round-trip.
         self.render()
         self._thread = threading.Thread(target=self._listen, daemon=True)
         self._thread.start()
@@ -275,6 +291,8 @@ class SpotifyPage(BasePage):
             self._mpris = None
         self._stop = None
         self._last_state = None
+        self._art_url = ""
+        self._art_image = None
 
     def _listen(self):
         """Block on filter queues; re-render when state actually changes."""
@@ -284,6 +302,16 @@ class SpotifyPage(BasePage):
         mpris = self._mpris
         if stop is None or props_q is None or name_q is None or mpris is None:
             return
+        # Initial cover-art fetch on the listener thread so activate() doesn't
+        # block the main thread. If the URL is new, render once with the art.
+        # The stop check guards against deactivate() firing during a slow fetch
+        # — without it, we could draw onto a page that's no longer active.
+        try:
+            snap = mpris.snapshot()
+            if self._refresh_art(snap) and not stop.is_set():
+                self.render(snap)
+        except Exception:
+            traceback.print_exc()
         while not stop.is_set():
             got_signal = False
             force = False
@@ -310,7 +338,8 @@ class SpotifyPage(BasePage):
                 continue
             try:
                 snap = mpris.snapshot()
-                if force or snap != self._last_state:
+                art_updated = self._refresh_art(snap)
+                if force or art_updated or snap != self._last_state:
                     self.render(snap)
             except Exception:
                 traceback.print_exc()
@@ -349,8 +378,7 @@ class SpotifyPage(BasePage):
             self.ctrl.set_key_image(15, label=snap.artist[:12], color=(30, 215, 96))
         if snap.title:
             self.ctrl.set_key_image(23, label=snap.title[:12], color=(30, 215, 96))
-        if snap.album:
-            self.ctrl.set_key_image(31, label=snap.album[:12], color=(30, 215, 96))
+        self.ctrl.set_key_image(31, pil_image=self._art_image)
 
     def on_key(self, key):
         mpris = self._mpris
