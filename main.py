@@ -3,6 +3,7 @@ import os
 import signal
 import sys
 import threading
+from typing import Optional
 
 import yaml
 from PIL import Image, ImageDraw, ImageFont
@@ -135,20 +136,31 @@ class DeckController:
                 self.set_key_image(key, color=(0, 0, 0))
 
     def set_key_image(
-        self, key, icon_filename=None, label=None, color=(0, 0, 0), highlight=None
+        self,
+        key,
+        icon_filename=None,
+        label=None,
+        color=(0, 0, 0),
+        highlight=None,
+        pil_image: Optional[Image.Image] = None,
     ):
         """Render an icon + optional text label onto a key.
 
-        highlight: optional RGB tuple to draw a colored indicator bar at the
+        Source precedence: pil_image > icon_filename > blank colour.
+
+        highlight: optional RGB tuple to draw a coloured indicator bar at the
         top of the key (e.g. green for active state).
         """
+        if pil_image is not None:
+            source = pil_image
+        elif icon_filename:
+            source = Image.open(os.path.join(ASSETS_PATH, icon_filename))
+        else:
+            source = Image.new("RGB", self._key_size, color)
+
         image = PILHelper.create_scaled_key_image(
             self.deck,
-            (
-                Image.open(os.path.join(ASSETS_PATH, icon_filename))
-                if icon_filename
-                else Image.new("RGB", self._key_size, color)
-            ),
+            source,
             margins=[0, 0, 20 if label else 0, 0],
         )
         draw = ImageDraw.Draw(image)
