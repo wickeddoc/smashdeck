@@ -35,10 +35,16 @@ _PLAYER = DBusAddress(MPRIS_PATH, bus_name=SPOTIFY_BUS,
                      interface=PLAYER_IFACE)
 
 
+# Note on the missing ``sender=`` field: the D-Bus daemon's ``AddMatch`` resolves
+# well-known names server-side, so the bus only delivers matching signals. But
+# jeepney's client-side ``MatchRule.matches`` does a strict string compare on
+# the ``sender`` header field, and incoming signals carry the sender's unique
+# name (e.g. ``:1.245``), not its well-known name. Keeping ``sender=`` in the
+# rule made every PropertiesChanged signal fail the client-side filter. The
+# remaining fields are specific enough on their own.
 def _props_rule() -> MatchRule:
     return MatchRule(
         type="signal",
-        sender=SPOTIFY_BUS,
         interface="org.freedesktop.DBus.Properties",
         member="PropertiesChanged",
         path=MPRIS_PATH,
@@ -48,7 +54,6 @@ def _props_rule() -> MatchRule:
 def _name_owner_rule() -> MatchRule:
     rule = MatchRule(
         type="signal",
-        sender="org.freedesktop.DBus",
         interface="org.freedesktop.DBus",
         member="NameOwnerChanged",
     )
