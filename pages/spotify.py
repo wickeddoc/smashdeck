@@ -62,6 +62,7 @@ class PlayerSnapshot:
     title: str = ""
     album: str = ""
     volume: float = 0.5
+    art_url: str = ""
 
 
 class SpotifyMpris:
@@ -130,6 +131,10 @@ class SpotifyMpris:
                 album_val = self._unwrap(meta.get("xesam:album"))
                 if isinstance(album_val, str):
                     snap.album = album_val
+
+                art_url_val = self._unwrap(meta.get("mpris:artUrl"))
+                if isinstance(art_url_val, str):
+                    snap.art_url = art_url_val
 
             return snap
         except Exception:
