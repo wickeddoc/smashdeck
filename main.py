@@ -2,11 +2,12 @@
 import os
 import signal
 import sys
-import yaml
 import threading
+
+import yaml
+from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
-from PIL import Image, ImageDraw, ImageFont
 
 ASSETS_PATH = os.path.join(os.path.dirname(__file__), "icons")
 
@@ -49,16 +50,15 @@ class DeckController:
         signal.signal(signal.SIGTERM, shutdown)  # kill / systemd stop
 
         try:
-
             self.deck.reset()
             self.deck.set_brightness(60)
             self.deck.set_key_callback(self._on_key)
 
             # Register pages (imported from pages/)
             from pages.home import HomePage
-            from pages.spotify import SpotifyPage
             from pages.hue import HuePage
             from pages.kasa import KasaPage
+            from pages.spotify import SpotifyPage
             from pages.tapo import TapoPage
 
             self.pages = {
@@ -135,6 +135,7 @@ class DeckController:
             margins=[0, 0, 20 if label else 0, 0],
         )
         draw = ImageDraw.Draw(image)
+
         if highlight:
             draw.rectangle([(0, 0), (image.width, 4)], fill=highlight)
         if label:
