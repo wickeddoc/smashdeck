@@ -27,6 +27,7 @@ class DeckController:
             self.config = yaml.safe_load(f)
             print(self.config)
         self.deck = None
+        self._key_size = (72, 72)
         self.current_page = None
         self.pages = {}
         self.page_history = []
@@ -38,6 +39,22 @@ class DeckController:
 
         self.deck = devices[0]
         self.deck.open()
+
+        deck_type = self.deck.deck_type()
+        self._key_size = self.deck.key_image_format()["size"]
+        known = ("XL", "Mk.2", "Original", "Mini", "Plus")
+        is_known = any(k.lower() in deck_type.lower() for k in known)
+        if is_known:
+            print(
+                f"Stream Deck: {deck_type} "
+                f"(key images: {self._key_size[0]}x{self._key_size[1]})"
+            )
+        else:
+            print(
+                f"Warning: untested Stream Deck model '{deck_type}'; "
+                f"proceeding anyway. (key images: "
+                f"{self._key_size[0]}x{self._key_size[1]})"
+            )
 
         # Register clean shutdown
         def shutdown(sig, frame):
