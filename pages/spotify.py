@@ -7,10 +7,14 @@ exposes a single `snapshot()` returning all player state in one round-trip.
 
 from __future__ import annotations
 
+import threading
+import traceback
 from dataclasses import dataclass
+from queue import Empty
 from typing import Optional
 
-from jeepney import DBusAddress, new_method_call
+from jeepney import DBusAddress, MatchRule, new_method_call
+from jeepney.bus_messages import message_bus
 from jeepney.io.threading import open_dbus_connection, DBusRouter
 
 from pages import BasePage
@@ -24,6 +28,29 @@ PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
 
 _PROPS = DBusAddress(MPRIS_PATH, bus_name=SPOTIFY_BUS,
                     interface="org.freedesktop.DBus.Properties")
+_PLAYER = DBusAddress(MPRIS_PATH, bus_name=SPOTIFY_BUS,
+                     interface=PLAYER_IFACE)
+
+
+def _props_rule() -> MatchRule:
+    return MatchRule(
+        type="signal",
+        sender=SPOTIFY_BUS,
+        interface="org.freedesktop.DBus.Properties",
+        member="PropertiesChanged",
+        path=MPRIS_PATH,
+    )
+
+
+def _name_owner_rule() -> MatchRule:
+    rule = MatchRule(
+        type="signal",
+        sender="org.freedesktop.DBus",
+        interface="org.freedesktop.DBus",
+        member="NameOwnerChanged",
+    )
+    rule.add_arg_condition(0, SPOTIFY_BUS)
+    return rule
 
 
 @dataclass
@@ -38,14 +65,24 @@ class PlayerSnapshot:
 
 
 class SpotifyMpris:
-    """Thin adapter over jeepney for Spotify's MPRIS2 interface."""
+    """Thin adapter over jeepney for Spotify's MPRIS2 interface.
+
+    Note: ``_dbus_conn`` is kept alongside the ``_conn`` router because
+    ``DBusRouter.close()`` only stops the receiver thread; the underlying
+    socket is owned by ``DBusConnection`` and must be closed separately.
+    """
 
     def __init__(self):
-        self._conn = DBusRouter(open_dbus_connection(bus="SESSION"))
+        self._dbus_conn = open_dbus_connection(bus="SESSION")
+        self._conn = DBusRouter(self._dbus_conn)
 
     def close(self):
         try:
             self._conn.close()
+        except Exception:
+            pass
+        try:
+            self._dbus_conn.close()
         except Exception:
             pass
 
@@ -107,13 +144,26 @@ class SpotifyMpris:
             return variant[1]
         return variant
 
+    def subscribe(self, rule: MatchRule):
+        """Register a match rule with the bus and open a filter queue.
+
+        Returns (context_manager, queue). The caller must keep the context
+        manager open until done listening.
+        """
+        cm = self._conn.filter(rule)
+        q = cm.__enter__()
+        try:
+            self._conn.send_and_get_reply(message_bus.AddMatch(rule))
+        except Exception:
+            cm.__exit__(None, None, None)
+            raise
+        return cm, q
+
     # --- write API (silent no-op if Spotify isn't running) ---
 
     def _player_call(self, member: str):
-        addr = DBusAddress(MPRIS_PATH, bus_name=SPOTIFY_BUS,
-                           interface=PLAYER_IFACE)
         try:
-            self._conn.send_and_get_reply(new_method_call(addr, member))
+            self._conn.send_and_get_reply(new_method_call(_PLAYER, member))
         except Exception:
             pass
 
@@ -158,24 +208,98 @@ class SpotifyPage(BasePage):
         super().__init__(controller)
         self._mpris: Optional[SpotifyMpris] = None
         self._last_state: Optional[PlayerSnapshot] = None
+        self._stop: Optional[threading.Event] = None
+        self._thread: Optional[threading.Thread] = None
+        self._props_cm = None
+        self._props_q = None
+        self._name_cm = None
+        self._name_q = None
 
     def activate(self):
         self._mpris = SpotifyMpris()
+        self._stop = threading.Event()
+        self._props_cm, self._props_q = self._mpris.subscribe(_props_rule())
+        self._name_cm, self._name_q = self._mpris.subscribe(_name_owner_rule())
+        self._last_state = self._mpris.snapshot()
+        self.render()
+        self._thread = threading.Thread(target=self._listen, daemon=True)
+        self._thread.start()
 
     def deactivate(self):
+        if self._stop is not None:
+            self._stop.set()
+        # Listener wakes within the 0.5s queue.get timeout and exits because
+        # _stop is set. Then we tear down the filters and close the conn.
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        if self._props_cm is not None:
+            try:
+                self._props_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._props_cm = None
+        if self._name_cm is not None:
+            try:
+                self._name_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._name_cm = None
+        self._props_q = None
+        self._name_q = None
         if self._mpris is not None:
             self._mpris.close()
             self._mpris = None
+        self._stop = None
         self._last_state = None
+
+    def _listen(self):
+        """Block on filter queues; re-render when state actually changes."""
+        stop = self._stop
+        props_q = self._props_q
+        name_q = self._name_q
+        if stop is None or props_q is None or name_q is None:
+            return
+        while not stop.is_set():
+            got_signal = False
+            force = False
+            try:
+                props_q.get(timeout=0.5)
+                got_signal = True
+                # Drain anything that came in while we were rendering.
+                while True:
+                    try:
+                        props_q.get_nowait()
+                    except Empty:
+                        break
+            except Empty:
+                pass
+            try:
+                while True:
+                    name_q.get_nowait()
+                    got_signal = True
+                    force = True
+            except Empty:
+                pass
+
+            if not got_signal or self._mpris is None:
+                continue
+            try:
+                snap = self._mpris.snapshot()
+                if force or snap != self._last_state:
+                    self.render(snap)
+            except Exception:
+                traceback.print_exc()
 
     def _snap(self) -> PlayerSnapshot:
         if self._mpris is None:
             return PlayerSnapshot()
         return self._mpris.snapshot()
 
-    def render(self):
+    def render(self, snap: Optional[PlayerSnapshot] = None):
         self.clear()
-        snap = self._snap()
+        if snap is None:
+            snap = self._snap()
         self._last_state = snap
 
         playing = snap.status == "Playing"
