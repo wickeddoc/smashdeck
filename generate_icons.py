@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Generate 72x72 PNG icons for the Stream Deck home automation project."""
+"""Generate Stream Deck icons (default: 144x144 for XL/Mk.2).
+
+Override the output resolution with the ICON_SIZE env var, e.g.
+``ICON_SIZE=72 python generate_icons.py`` for an Original / Mini set.
+"""
 
 from PIL import Image, ImageDraw, ImageFont
 import math
 import os
 
-SIZE = 72
+SIZE = int(os.environ.get("ICON_SIZE", "144"))
+_SCALE = SIZE / 72  # design coords stay 72-based and scale on the fly
 OUT = "icons"
 os.makedirs(OUT, exist_ok=True)
+
+
+def _s(v):
+    """Scale a 72-based design coordinate (or line width / font size) to SIZE."""
+    return int(round(v * _SCALE))
 
 
 def new(bg=(0, 0, 0)):
@@ -449,7 +459,7 @@ def icon_refresh():
 # ── Generate All ────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Generating Stream Deck icons (72×72)...\n")
+    print(f"Generating Stream Deck icons ({SIZE}x{SIZE})...\n")
 
     print("Navigation:")
     icon_back()
