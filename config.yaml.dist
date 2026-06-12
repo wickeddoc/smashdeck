@@ -1,22 +1,17 @@
 # config.yaml
 hue:
   bridge_ip: "192.168.1.1"
-  rooms:
-    - name: "Living"
-      group_id: 1
-    - name: "Bedroom"
-      group_id: 2
-    - name: "Kitchen"
-      group_id: 3
+  # Rooms are read live from the bridge; only scenes need configuring.
+  # Find scene IDs via the bridge API: http://<bridge_ip>/api/<user>/scenes
   scenes:
     - name: "Relax"
       group_id: 1
       scene_id: "abc123"
-      color: [255, 147, 41]
+      icon: "scene_relax.png"   # any icon from icons/
     - name: "Focus"
       group_id: 1
       scene_id: "def456"
-      color: [200, 200, 255]
+      icon: "scene_focus.png"
 
 kasa:
   devices:
@@ -35,9 +30,8 @@ tapo:
       host: "192.168.1.31"
 
 spotify:
-  client_id: "YOUR_CLIENT_ID"
-  client_secret: "YOUR_CLIENT_SECRET"
-  redirect_uri: "http://localhost:8888/callback"
+  # No credentials needed: playback control and playlist launching go over
+  # DBus/MPRIS2. Up to 5 playlists are shown on row 4 of the Spotify page.
   playlists:
     - name: "Chill"
       uri: "spotify:playlist:xxxxx"

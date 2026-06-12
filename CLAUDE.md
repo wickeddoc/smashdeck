@@ -26,6 +26,15 @@ ICON_SIZE=72 python generate_icons.py     # for Original / Mini, if you want
                                           # a pre-sized set on disk
 ```
 
+## Testing
+
+```bash
+pip install -r requirements-dev.txt   # pytest
+python -m pytest tests/
+```
+
+Page logic is tested without hardware or network: `tests/conftest.py` provides a `FakeController`/`FakeDeck` pair recording `set_key_image` calls, and network SDKs are faked per-test (e.g. monkeypatching `pages.hue.Bridge`).
+
 ## Linting
 
 The project uses Ruff (`.ruff_cache/` exists). No pyproject.toml or ruff config file is present yet.
@@ -45,25 +54,27 @@ ruff check .
 - `BasePage` (ABC in `pages/__init__.py`) — abstract `render()` / `on_key(key)`, optional `activate()` / `deactivate()` lifecycle hooks (e.g. SpotifyPage starts/stops a DBus signal-listener thread), and `clear()` which wipes only the content area (keys 8–31), preserving the nav bar.
 - Each page subclass controls keys 8–31; keys 0–7 are owned by the controller's nav bar.
 - Pages navigate between each other via `self.ctrl.switch_page("page_name")`.
-- **HomePage** (`pages/home.py`) — empty content area; navigation is provided by the persistent nav bar.
-- **SpotifyPage** (`pages/spotify.py`) — Controls Spotify playback via DBus/MPRIS2 (play/pause, next, prev, shuffle, repeat, volume). Renders the current track's album cover on key 31, fetched from `mpris:artUrl` via stdlib `urllib.request`. A background thread subscribes to `PropertiesChanged` so the page reflects external state changes (track skips in the Spotify app, etc.) automatically.
-- **HuePage / KasaPage / TapoPage** — row 2 lists devices/rooms; tap to toggle (Hue also surfaces lights of the selected room on row 3).
+- **HomePage** (`pages/home.py`) — deck brightness keys 8–11 (25/50/75/100 %).
+- **SpotifyPage** (`pages/spotify.py`) — Controls Spotify playback via DBus/MPRIS2 (play/pause, next, prev, shuffle, repeat, volume). Renders config playlists on keys 24–28 (started via `Player.OpenUri` — no Spotify credentials needed) and the current track's album cover on key 31, fetched from `mpris:artUrl` via stdlib `urllib.request`. A background thread subscribes to `PropertiesChanged` so the page reflects external state changes (track skips in the Spotify app, etc.) automatically.
+- **HuePage** (`pages/hue.py`) — rooms on row 2, lights of the selected room on row 3, config scenes on row 4. Connects to the bridge lazily on first render; an unreachable bridge renders `error.png` on key 8 (retried on the next key press / render) instead of crashing the app.
+- **KasaPage / TapoPage** — row 2 lists devices; tap to toggle.
 
 ### Key Layout Convention
 Keys are numbered 0–31 (4 rows × 8 columns, left-to-right, top-to-bottom). Keys 0–4 are a persistent global nav bar (Home, Spotify, Hue, Kasa, Tapo), defined by `NAV_KEYS` in `main.py`. Keys 5–6 are reserved/blank. Key 7 is a Restart button (`RESTART_KEY` in `main.py`) that re-execs the process in place via `os.execv` after a clean deck reset. Keys 8–31 are the page's content area (rows 2–4).
 
 ### Configuration (`config.yaml`)
-YAML file with sections for `hue`, `kasa`, and `spotify`. Contains device IPs, room/scene definitions, and Spotify OAuth credentials. New integrations should add their config section here.
+YAML file (gitignored; template in `config.yaml.dist`) with sections for `hue` (`bridge_ip` + `scenes`; rooms are read live from the bridge), `kasa`/`tapo` (device hosts, Tapo credentials), and `spotify` (`playlists` only — playback goes over DBus, no OAuth). New integrations should add their config section here.
 
 ## Dependencies
 
 - `streamdeck` — Stream Deck USB communication (python-elgato-streamdeck)
 - `Pillow` — Image rendering for key icons
 - `PyYAML` — Config parsing
-- `phue` — Philips Hue bridge control (used by `pages/hue.py` and `test.py`)
+- `phue` — Philips Hue bridge control (`pages/hue.py`)
 - `python-kasa` — TP-Link Kasa smart plug control (`pages/kasa.py`)
 - `tapo` — TP-Link Tapo smart device SDK (`pages/tapo.py`)
 - `jeepney` — Pure-Python DBus client used by `pages/spotify.py` to talk to Spotify over MPRIS2
+- `pytest` — dev-only (`requirements-dev.txt`), drives the `tests/` suite
 
 ## Adding a New Page
 
