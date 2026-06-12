@@ -28,12 +28,10 @@ class DeckController:
     def __init__(self, config_path="config.yaml"):
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
-            print(self.config)
         self.deck = None
         self._key_size = (72, 72)
         self.current_page = None
         self.pages = {}
-        self.page_history = []
 
     def start(self):
         devices = DeviceManager().enumerate()
@@ -105,20 +103,10 @@ class DeckController:
     def switch_page(self, name):
         if self.current_page and self.current_page is not self.pages.get(name):
             self.current_page.deactivate()
-            self.page_history.append(self._current_page_name())
         self.current_page = self.pages[name]
         self.render_nav_bar()
         self.current_page.render()
         self.current_page.activate()
-
-    def go_back(self):
-        if self.page_history:
-            self.current_page.deactivate()
-            name = self.page_history.pop()
-            self.current_page = self.pages[name]
-            self.render_nav_bar()
-            self.current_page.render()
-            self.current_page.activate()
 
     def _current_page_name(self):
         for name, page in self.pages.items():
