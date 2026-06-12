@@ -25,6 +25,8 @@ from pages import BasePage
 BUTTON_POSITION_VOLUME_UP = 13
 BUTTON_POSITION_VOLUME_DOWN = 14
 
+PLAYLIST_KEYS = (24, 25, 26, 27, 28)  # row 4; 29-30 free, 31 = cover art
+
 SPOTIFY_BUS = "org.mpris.MediaPlayer2.spotify"
 MPRIS_PATH = "/org/mpris/MediaPlayer2"
 PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
@@ -215,6 +217,14 @@ class SpotifyMpris:
         new = max(0.0, min(1.0, current + delta))
         self._set_prop("Volume", "d", new)
 
+    def open_uri(self, uri: str):
+        try:
+            self._conn.send_and_get_reply(
+                new_method_call(_PLAYER, "OpenUri", "s", (uri,))
+            )
+        except Exception:
+            pass
+
 
 class SpotifyPage(BasePage):
     def __init__(self, controller):
@@ -229,6 +239,8 @@ class SpotifyPage(BasePage):
         self._name_q = None
         self._art_url: str = ""
         self._art_image: Optional[Image.Image] = None
+        spotify_cfg = controller.config.get("spotify", {})
+        self._playlists = spotify_cfg.get("playlists", [])[: len(PLAYLIST_KEYS)]
 
     @staticmethod
     def _fetch_art(url: str) -> Optional[Image.Image]:
@@ -383,11 +395,20 @@ class SpotifyPage(BasePage):
             self.ctrl.set_key_image(15, label=snap.artist[:12], color=(30, 215, 96))
         if snap.title:
             self.ctrl.set_key_image(23, label=snap.title[:12], color=(30, 215, 96))
+        for i, pl in enumerate(self._playlists):
+            self.ctrl.set_key_image(
+                PLAYLIST_KEYS[i], f"playlist_{i + 1}.png", pl["name"][:12]
+            )
         self.ctrl.set_key_image(31, pil_image=self._art_image)
 
     def on_key(self, key):
         mpris = self._mpris
         if mpris is None:
+            return
+        if key in PLAYLIST_KEYS:
+            idx = PLAYLIST_KEYS.index(key)
+            if idx < len(self._playlists):
+                mpris.open_uri(self._playlists[idx]["uri"])
             return
         actions = {
             8: mpris.play_pause,
