@@ -3,6 +3,7 @@ import os
 import signal
 import sys
 import threading
+import traceback
 from typing import Optional
 
 import yaml
@@ -93,20 +94,24 @@ class DeckController:
             threading.Event().wait()
 
         except Exception:
-            import traceback
-
             traceback.print_exc()
         finally:
             self.deck.reset()
             self.deck.close()
 
     def switch_page(self, name):
-        if self.current_page and self.current_page is not self.pages.get(name):
+        page = self.pages[name]
+        # Re-selecting the active page only re-renders it: activate() must
+        # stay paired with exactly one deactivate(), or pages that start
+        # resources there (SpotifyPage's listener thread) leak them.
+        changed = page is not self.current_page
+        if changed and self.current_page:
             self.current_page.deactivate()
-        self.current_page = self.pages[name]
+        self.current_page = page
         self.render_nav_bar()
-        self.current_page.render()
-        self.current_page.activate()
+        page.render()
+        if changed:
+            page.activate()
 
     def _current_page_name(self):
         for name, page in self.pages.items():
@@ -177,6 +182,15 @@ class DeckController:
     def _on_key(self, deck, key, state):
         if not state:  # key down only
             return
+        # Runs on the Stream Deck library's reader thread, which only catches
+        # its own TransportError: anything else escaping here kills the thread
+        # and the deck stops responding to every key, Restart included.
+        try:
+            self._dispatch_key(key)
+        except Exception:
+            traceback.print_exc()
+
+    def _dispatch_key(self, key):
         # Top row (0-7): nav bar handles these
         if key in NAV_KEYS:
             page_name = NAV_KEYS[key][0]
@@ -198,8 +212,6 @@ class DeckController:
             self.deck.reset()
             self.deck.close()
         except Exception:
-            import traceback
-
             traceback.print_exc()
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
