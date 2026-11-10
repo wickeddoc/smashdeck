@@ -1,7 +1,7 @@
 # Monitor page: PC hardware, system resources, weather
 
 **Date:** 2026-11-10
-**Status:** Draft, awaiting review
+**Status:** Approved; implementation plan in `docs/superpowers/plans/2026-11-10-monitor-page.md`
 **Scope:** A new `Monitor` page that fills the deck's 24 content keys with live
 PC metrics and local weather, reachable from nav key 6 (left of Restart).
 
@@ -60,8 +60,8 @@ Approved via full-deck mockup (style A, network in Mbit/s).
 - Disk throughput: below 1 MB/s it shows whole kB/s, otherwise MB/s (one
   decimal under 10). Network: Mbit/s, one decimal under 10, whole numbers
   from 10, and Gbit/s with two decimals at 1000 Mbit/s or more.
-- Throughput keys (20–23) and CPU load (9) show `—` on the first tick: they
-  need two samples to compute a rate.
+- Throughput keys (20–23) and CPU load (9) show `—` whenever no rate is
+  available, e.g. on the first tick, since they need two samples.
 - UV band text: `low` (<3), `moderate` (3–5), `high` (6–7), `very high`
   (8–10), `extreme` (11+).
 
@@ -117,11 +117,13 @@ class SystemSample:          # every field may be None (= sensor unavailable)
     ssd_temp: float | None
     disk_read: float | None; disk_write: float | None   # bytes/s
     net_down: float | None; net_up: float | None        # bytes/s
+    pending: bool = False   # True only for SystemSample.placeholder(disk_names),
+                            # the "—" state shown before the first real sample
 
 class SystemSampler:
     def __init__(self, disks, net_interface=None,
                  hwmon_root="/sys/class/hwmon", route_file="/proc/net/route",
-                 clock=time.monotonic): ...
+                 clock=time.monotonic, gpu_query=query_nvidia_smi): ...
     def sample(self) -> SystemSample: ...
 ```
 
@@ -129,9 +131,10 @@ Small pure helpers, each unit-tested: `read_hwmon_power(root, driver, label)`
 (µW → W), `cpu_temp(sensors_temperatures_dict)`,
 `default_route_interface(route_text)` (lowest-metric `00000000` destination;
 re-resolved every tick so a changing default route is followed),
-`parse_nvidia_smi(stdout)` (`[N/A]` → None), and a `Rate` helper that turns
-cumulative counters into bytes/s via the injected clock (None on the first
-call or after a counter reset).
+`parse_nvidia_smi(stdout)` (`[N/A]` → None), and a `Rate` helper whose
+`update(counter, now)` turns cumulative counters into bytes/s (None on the
+first call or after a counter reset). The sampler reads its clock once per
+sample and passes the same `now` to all four rates.
 
 Each source is wrapped individually: an exception or missing binary or sensor
 gives `None` for that field only. The first failure per source is logged with
@@ -168,8 +171,9 @@ class Tile:        label: str; value: str; unit: str; color: RGB
 @dataclass(frozen=True)
 class WeatherTile: label: str; icon: str; value: str; detail: str
 
-def build_tiles(sample: SystemSample | None, weather: Weather | None,
-                now_utc: datetime) -> dict[int, Tile | WeatherTile]
+def build_tiles(sample: SystemSample, weather: Weather | None,
+                now_utc: datetime, weather_error: str | None = None
+                ) -> dict[int, Tile | WeatherTile]
 def render_tile(tile) -> PIL.Image.Image   # 144x144 RGB, style A
 ```
 
@@ -186,9 +190,12 @@ steps down until the text fits the key width. Weather tiles paste a
 
 ### `MonitorPage`
 
-- `__init__(ctrl, sampler=None, fetch_weather=None)`: reads `monitor`
-  config. The two optional arguments let tests inject fakes; production
-  passes nothing.
+- `__init__(ctrl, sampler=None, fetch_weather=None, clock=time.monotonic,
+  utcnow=...)`: reads `monitor` config. The optional arguments let tests
+  inject fakes and fixed clocks; production passes nothing.
+- `tick(stop=None)`: one poll. The thread calls it every 2 s and tests call
+  it directly. A tick whose `stop` event is already set draws nothing, so a
+  slow weather fetch that outlives `deactivate()` can't paint over the next page.
 - `render()`: pushes every tile from the last data (all `—` before the first
   sample) and resets the diff cache. It's called by `switch_page` and makes
   no network or sensor calls, so it can't block the key callback.
@@ -204,7 +211,8 @@ steps down until the text fits the key width. Weather tiles paste a
   immediately when a weather key (24–31) is pressed (`on_key` sets a flag the
   poll thread picks up; the HTTP call never runs on the callback thread).
   The fetch runs on the poll thread with a 5 s timeout, so a slow API delays
-  one tick at most.
+  one tick at most. A failure prints one line (`monitor: weather fetch
+  failed: ...`), not a traceback, since it repeats every 60 s while offline.
 - Weather data is kept on failure. After 3 h without a successful fetch, or
   if no location is configured, key 24 shows `error.png` with detail
   `offline` / `no location` and keys 25–31 show `—`.
