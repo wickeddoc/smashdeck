@@ -21,9 +21,11 @@ class FakeController:
         self.config = config or {}
         self.deck = FakeDeck()
         self.images = {}  # key index -> kwargs of last render
+        self.pushes = []  # key index of every set_key_image call, in order
 
     def set_key_image(self, key, icon_filename=None, label=None,
                       color=(0, 0, 0), highlight=None, pil_image=None):
+        self.pushes.append(key)
         self.images[key] = {
             "icon": icon_filename,
             "label": label,
