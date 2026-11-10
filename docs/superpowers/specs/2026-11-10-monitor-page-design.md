@@ -3,7 +3,7 @@
 **Date:** 2026-11-10
 **Status:** Draft, awaiting review
 **Scope:** A new `Monitor` page that fills the deck's 24 content keys with live
-PC metrics and local weather, reachable from nav key 5.
+PC metrics and local weather, reachable from nav key 6 (left of Restart).
 
 ## Goals
 
@@ -29,7 +29,7 @@ Approved via full-deck mockup (style A, network in Mbit/s).
 
 | Key | Label | Value / unit | Source | Colour (warn / crit) |
 |---|---|---|---|---|
-| 5 | Monitor (nav) | new `monitor.png` icon | — | — |
+| 6 | Monitor (nav) | new `monitor.png` icon; key 5 stays blank | — | — |
 | 8 | CPU | `51°` / `°C` | `Tctl` from `zenpower` → `k10temp` → `coretemp` "Package id 0" | 75 / 90 |
 | 9 | CPU load | `12` / `%` | `psutil.cpu_percent()` (delta since last tick) | 70 / 90 |
 | 10 | CPU pwr | `42` / `W` | hwmon `zenpower` power label `RAPL_P_Package` | blue |
@@ -224,18 +224,41 @@ monitor:
     longitude: 13.41
 ```
 
-`config.yaml.dist` gets this example section. The location in `config.yaml`
-is left for the user to fill in.
+`config.yaml.dist` gets this example section (Open-Meteo's Berlin example).
+The local `config.yaml` uses Münsbach, Luxembourg: `latitude: 49.63277`,
+`longitude: 6.26459` (Open-Meteo geocoding, Europe/Luxembourg time zone),
+with that place name as a comment.
+
+## Related change: active nav-key highlight
+
+Today `render_nav_bar` passes the active page's highlight as `color=`. That is
+only the background for icon-less keys, and every nav icon is an opaque
+tile, so the current page is never marked. The approved fix, style C
+("label strip"):
+
+- `set_key_image` gains `label_bg: RGB | None = None`. When it's set, after
+  scaling, the bottom label strip (the same 20 px margin the icon is kept
+  out of) is filled with `label_bg`, and the label is drawn in bold dark text
+  (`(10, 20, 40)`, DejaVu Sans Bold 12) on top. The icon is untouched.
+- `render_nav_bar` passes `label_bg=NAV_ACTIVE_COLOR` (`(110, 170, 255)`)
+  for the active page's key and drops the ineffective `color=` argument.
+- Test, in `tests/test_controller.py` with the existing `ImageDeck`
+  stub: after switching pages, decode the active nav key's native JPEG,
+  undo the XL's flip, and check that a pixel in the label strip away from
+  the text is the accent colour while the same pixel on an inactive nav
+  key is black. Switching pages moves the strip.
+
+It ships as its own commit before the Monitor work.
 
 ## Changes to existing files
 
-- `main.py`: `NAV_KEYS[5] = ("monitor", "monitor.png", "Monitor")`; register
+- `main.py`: `NAV_KEYS[6] = ("monitor", "monitor.png", "Monitor")`; register
   `MonitorPage` in `self.pages`.
 - `generate_icons.py`: `monitor.png` (bar-chart tile) and the nine
   `weather_*.png` icons, at 144×144 like the rest.
 - `requirements.txt`: add `psutil`.
 - `config.yaml.dist`: `monitor` section.
-- `README.md`, `CLAUDE.md`: key 5 is Monitor (no longer reserved); page
+- `README.md`, `CLAUDE.md`: key 6 is Monitor, key 5 stays reserved; page
   description; config section.
 - `.gitignore`: add `.superpowers/` (brainstorm mockups).
 
