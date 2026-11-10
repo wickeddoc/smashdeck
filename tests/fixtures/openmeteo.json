@@ -1,0 +1,47 @@
+{
+  "latitude": 52.512604,
+  "longitude": 13.419517,
+  "utc_offset_seconds": 3600,
+  "timezone": "Europe/Berlin",
+  "current": {
+    "time": "2026-11-10T15:00",
+    "temperature_2m": 4.8,
+    "apparent_temperature": 2.0,
+    "relative_humidity_2m": 82,
+    "wind_speed_10m": 7.4,
+    "wind_direction_10m": 293,
+    "weather_code": 3,
+    "is_day": 1,
+    "uv_index": 0.65
+  },
+  "daily": {
+    "time": [
+      "2026-11-10",
+      "2026-11-11"
+    ],
+    "weather_code": [
+      61,
+      51
+    ],
+    "temperature_2m_max": [
+      4.8,
+      5.1
+    ],
+    "temperature_2m_min": [
+      2.3,
+      1.9
+    ],
+    "precipitation_probability_max": [
+      43,
+      10
+    ],
+    "sunrise": [
+      "2026-11-10T07:19",
+      "2026-11-11T07:20"
+    ],
+    "sunset": [
+      "2026-11-10T16:20",
+      "2026-11-11T16:19"
+    ]
+  }
+}
