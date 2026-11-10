@@ -401,6 +401,119 @@ def icon_playlist(color, filename):
     save(img, filename)
 
 
+# ── Monitor / Weather ───────────────────────────────────
+
+SUN = (250, 200, 50)
+MOON = (230, 230, 200)
+CLOUD = (225, 230, 240)
+DARK_CLOUD = (160, 170, 190)
+RAIN = (90, 150, 255)
+SNOW = (235, 240, 255)
+BOLT = (255, 210, 60)
+CLEAR = (0, 0, 0, 0)  # weather icons are transparent: drawn onto black keys
+
+
+def icon_monitor():
+    img, d = new((40, 60, 90))
+    for i, h in enumerate((20, 35, 27, 45)):
+        x = 15 + i * 12
+        d.rectangle([(_s(x), _s(59 - h)), (_s(x + 7), _s(59))], fill=(110, 170, 255))
+    save(img, "monitor.png")
+
+
+def _sun(d, cx, cy, r):
+    for a in range(0, 360, 45):
+        x, y = math.cos(math.radians(a)), math.sin(math.radians(a))
+        d.line(
+            [(_s(cx + x * r * 1.4), _s(cy + y * r * 1.4)),
+             (_s(cx + x * r * 1.9), _s(cy + y * r * 1.9))],
+            fill=SUN, width=_s(3),
+        )
+    d.ellipse([(_s(cx - r), _s(cy - r)), (_s(cx + r), _s(cy + r))], fill=SUN)
+
+
+def _moon(d, cx, cy, r):
+    d.ellipse([(_s(cx - r), _s(cy - r)), (_s(cx + r), _s(cy + r))], fill=MOON)
+    # Overdraw with transparency to cut the crescent.
+    d.ellipse([(_s(cx - r + 8), _s(cy - r - 4)), (_s(cx + r + 8), _s(cy + r - 4))], fill=CLEAR)
+
+
+def _cloud(d, ox, oy, k=1.0, color=CLOUD):
+    """Three puffs on a flat base; spans x ox-11k..ox+34k, y oy-13k..oy+16k."""
+    for bx, by, br in ((0, 4, 11), (13, 0, 13), (24, 6, 10)):
+        d.ellipse(
+            [(_s(ox + (bx - br) * k), _s(oy + (by - br) * k)),
+             (_s(ox + (bx + br) * k), _s(oy + (by + br) * k))],
+            fill=color,
+        )
+    d.rectangle([(_s(ox), _s(oy + 4 * k)), (_s(ox + 24 * k), _s(oy + 16 * k))], fill=color)
+
+
+def icon_weather_clear_day():
+    img, d = new(CLEAR)
+    _sun(d, 36, 36, 14)
+    save(img, "weather_clear_day.png")
+
+
+def icon_weather_clear_night():
+    img, d = new(CLEAR)
+    _moon(d, 34, 36, 20)
+    save(img, "weather_clear_night.png")
+
+
+def icon_weather_partly_day():
+    img, d = new(CLEAR)
+    _sun(d, 27, 27, 11)
+    _cloud(d, 30, 40)
+    save(img, "weather_partly_day.png")
+
+
+def icon_weather_partly_night():
+    img, d = new(CLEAR)
+    _moon(d, 25, 26, 14)
+    _cloud(d, 30, 40)
+    save(img, "weather_partly_night.png")
+
+
+def icon_weather_cloudy():
+    img, d = new(CLEAR)
+    _cloud(d, 23, 18, 0.8, DARK_CLOUD)
+    _cloud(d, 22, 36, 1.2)
+    save(img, "weather_cloudy.png")
+
+
+def icon_weather_fog():
+    img, d = new(CLEAR)
+    _cloud(d, 25, 22, 1.0, DARK_CLOUD)
+    for y in (46, 54, 62):
+        d.line([(_s(14), _s(y)), (_s(58), _s(y))], fill=CLOUD, width=_s(3))
+    save(img, "weather_fog.png")
+
+
+def icon_weather_rain():
+    img, d = new(CLEAR)
+    _cloud(d, 24, 22, 1.1, DARK_CLOUD)
+    for x in (27, 37, 47):
+        d.line([(_s(x), _s(48)), (_s(x - 5), _s(62))], fill=RAIN, width=_s(3))
+    save(img, "weather_rain.png")
+
+
+def icon_weather_snow():
+    img, d = new(CLEAR)
+    _cloud(d, 24, 22, 1.1, DARK_CLOUD)
+    for x, y in ((26, 52), (37, 60), (48, 52)):
+        d.ellipse([(_s(x - 3), _s(y - 3)), (_s(x + 3), _s(y + 3))], fill=SNOW)
+    save(img, "weather_snow.png")
+
+
+def icon_weather_thunder():
+    img, d = new(CLEAR)
+    _cloud(d, 24, 22, 1.1, DARK_CLOUD)
+    bolt = [(40, 42), (30, 56), (37, 56), (32, 68), (46, 51), (39, 51), (44, 42)]
+    d.polygon([(_s(x), _s(y)) for x, y in bolt], fill=BOLT)
+    save(img, "weather_thunder.png")
+
+
 # ── Misc ────────────────────────────────────────────────
 
 
@@ -490,6 +603,18 @@ if __name__ == "__main__":
     icon_playlist((100, 150, 255), "playlist_3.png")
     icon_playlist((255, 200, 50), "playlist_4.png")
     icon_playlist((200, 100, 255), "playlist_5.png")
+
+    print("\nMonitor / Weather:")
+    icon_monitor()
+    icon_weather_clear_day()
+    icon_weather_clear_night()
+    icon_weather_partly_day()
+    icon_weather_partly_night()
+    icon_weather_cloudy()
+    icon_weather_fog()
+    icon_weather_rain()
+    icon_weather_snow()
+    icon_weather_thunder()
 
     print("\nMisc:")
     icon_blank()
