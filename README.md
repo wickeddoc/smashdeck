@@ -15,6 +15,7 @@ SmashDeck renders icon + label keys onto a Stream Deck XL and routes key presses
 | Hue     | `phue` (Philips Hue bridge)          | Implemented |
 | Kasa    | `python-kasa` (TP-Link Kasa)         | Implemented |
 | Tapo    | `tapo` SDK (TP-Link Tapo)            | Implemented |
+| Monitor | psutil, sysfs hwmon, `nvidia-smi`, Open-Meteo | Implemented |
 | Heos    | DENON Heos                           | Planned     |
 
 The Spotify page renders the current track's album cover on key 31 and updates automatically on track changes (via `org.mpris.MediaPlayer2.spotify` PropertiesChanged signals). Up to 5 playlists from `config.yaml` are shown on row 4 and start playback via MPRIS2 `OpenUri` — no Spotify credentials needed.
@@ -22,8 +23,9 @@ The Spotify page renders the current track's album cover on key 31 and updates a
 ## Requirements
 
 - A connected Stream Deck XL (32 keys, 4×8). Smaller models (Original / Mini / Mk.2) work too — icons are auto-scaled by the Stream Deck library at render time.
-- Python 3, with deps from `requirements.txt`: `streamdeck`, `Pillow`, `PyYAML`, `phue`, `python-kasa`, `tapo`, `jeepney`.
+- Python 3, with deps from `requirements.txt`: `streamdeck`, `Pillow`, `PyYAML`, `phue`, `python-kasa`, `tapo`, `jeepney`, `psutil`.
 - A running D-Bus session bus (standard on any Linux desktop) for the Spotify page.
+- Optional: `nvidia-smi` (NVIDIA driver) for the Monitor page's GPU keys; without it they show "n/a".
 
 ## Setup
 
@@ -31,7 +33,7 @@ The Spotify page renders the current track's album cover on key 31 and updates a
 pip install -r requirements.txt        # ideally into a virtualenv
 cp config.yaml.dist config.yaml
 # edit config.yaml: Hue bridge IP + scenes, Kasa/Tapo device hosts,
-# Tapo credentials, Spotify playlists
+# Tapo credentials, Spotify playlists, Monitor disks + weather location
 ```
 
 ## Running
@@ -45,8 +47,8 @@ python device_info.py   # diagnostics for connected Stream Decks
 
 Keys are numbered 0–31, left-to-right, top-to-bottom (4 rows × 8 columns).
 
-- **Keys 0–4** — global nav bar: Home, Spotify, Hue, Kasa, Tapo
-- **Keys 5–6** — reserved / blank
+- **Keys 0–4, 6** — global nav bar: Home, Spotify, Hue, Kasa, Tapo, Monitor (the current page's key has a blue label strip)
+- **Key 5** — reserved / blank
 - **Key 7** — Restart (re-execs the process)
 - **Keys 8–31** — page content area (rows 2–4)
 
@@ -58,6 +60,7 @@ Per-page content:
 - **Hue** — rooms on row 2, lights of the selected room on row 3, scenes on
   row 4; an unreachable bridge shows an error key instead of crashing
 - **Kasa / Tapo** — devices on row 2, tap to toggle
+- **Monitor** — row 2: CPU/GPU temperature, load and power, VRAM, whole-PC power; row 3: RAM, two disks, hottest NVMe, disk read/write, network down/up (Mbit/s); row 4: Open-Meteo weather (now, feels like, humidity, wind, rain, UV, tomorrow, next sunrise/sunset). Values are colour-coded green/amber/red and refresh every 2 s while the page is open; weather refreshes every 15 min, or immediately when a weather key is pressed.
 
 ## Project layout
 
@@ -76,6 +79,10 @@ pages/
                    scenes (row 4); lazy bridge connect with error fallback
   kasa.py          KasaPage — toggle Kasa devices
   tapo.py          TapoPage — toggle Tapo devices
+  monitor/         MonitorPage — PC metrics + weather (nav key 6)
+    sources.py     psutil / hwmon / nvidia-smi -> SystemSample
+    weather.py     Open-Meteo client (no API key)
+    tiles.py       what each key shows (build_tiles) and how it is drawn
 tests/             pytest suite (FakeController/FakeDeck, no hardware needed)
 icons/             144×144 PNG key icons (XL native; auto-downscaled for
                    smaller decks)

@@ -11,7 +11,7 @@ from main import DeckController
 from pages import BasePage
 
 # NAV_KEYS indices, see main.py
-HOME, SPOTIFY, HUE, KASA = 0, 1, 2, 3
+HOME, SPOTIFY, HUE, KASA, MONITOR = 0, 1, 2, 3, 6
 
 
 class ImageDeck:
@@ -167,3 +167,13 @@ def test_label_strip_moves_with_page_switch(controller):
 
     assert close_to(key_pixel(controller, HOME, STRIP_PIXEL), ACCENT)
     assert close_to(key_pixel(controller, SPOTIFY, STRIP_PIXEL), BLACK)
+
+
+def test_nav_key_6_opens_monitor_page(controller):
+    monitor = RecordingPage(controller)
+    controller.pages = {"home": RecordingPage(controller), "monitor": monitor}
+
+    press(controller, MONITOR)
+
+    assert controller.current_page is monitor
+    assert close_to(key_pixel(controller, MONITOR, STRIP_PIXEL), ACCENT)

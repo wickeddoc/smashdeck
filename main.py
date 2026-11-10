@@ -20,6 +20,7 @@ NAV_KEYS = {
     2: ("hue", "hue.png", "Hue"),
     3: ("kasa", "kasa.png", "Kasa"),
     4: ("tapo", "tapo.png", "Tapo"),
+    6: ("monitor", "monitor.png", "Monitor"),
 }
 
 RESTART_KEY = 7
@@ -90,6 +91,7 @@ class DeckController:
             from pages.home import HomePage
             from pages.hue import HuePage
             from pages.kasa import KasaPage
+            from pages.monitor import MonitorPage
             from pages.spotify import SpotifyPage
             from pages.tapo import TapoPage
 
@@ -99,6 +101,7 @@ class DeckController:
                 "hue": HuePage(self),
                 "kasa": KasaPage(self),
                 "tapo": TapoPage(self),
+                "monitor": MonitorPage(self),
             }
 
             self.switch_page("home")

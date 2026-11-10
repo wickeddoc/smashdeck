@@ -37,3 +37,16 @@ spotify:
       uri: "spotify:playlist:xxxxx"
     - name: "Work"
       uri: "spotify:playlist:yyyyy"
+
+monitor:
+  # Up to 2 disks, shown on keys 17-18 as "Disk <name>" (% full).
+  disks:
+    - name: "/"
+      path: "/"
+    - name: "Home"
+      path: "/home"
+  # net_interface: "eth0"     # optional; default = interface on the default route
+  weather:
+    # Sent to api.open-meteo.com (no API key). This example is Berlin.
+    latitude: 52.52
+    longitude: 13.41
