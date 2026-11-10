@@ -5,3 +5,4 @@ phue
 python-kasa
 tapo
 jeepney
+psutil
