@@ -24,6 +24,19 @@ NAV_KEYS = {
 
 RESTART_KEY = 7
 
+FONT_PATH = "/usr/share/fonts/TTF/DejaVuSans.ttf"
+BOLD_FONT_PATH = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
+LABEL_STRIP = 20  # px below the icon reserved for the label
+NAV_ACTIVE_COLOR = (110, 170, 255)  # label strip of the current page's nav key
+LABEL_ON_STRIP = (10, 20, 40)  # label text drawn on a coloured strip
+
+
+def _font(path, size):
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.load_default()
+
 
 class DeckController:
     def __init__(self, config_path="config.yaml"):
@@ -125,8 +138,8 @@ class DeckController:
         for key in range(8):
             if key in NAV_KEYS:
                 page_name, icon, label = NAV_KEYS[key]
-                highlight = (50, 50, 80) if page_name == active else None
-                self.set_key_image(key, icon, label, color=highlight or (0, 0, 0))
+                strip = NAV_ACTIVE_COLOR if page_name == active else None
+                self.set_key_image(key, icon, label, label_bg=strip)
             elif key == RESTART_KEY:
                 self.set_key_image(key, "refresh.png", "Restart")
             else:
@@ -140,6 +153,7 @@ class DeckController:
         color=(0, 0, 0),
         highlight=None,
         pil_image: Optional[Image.Image] = None,
+        label_bg=None,
     ):
         """Render an icon + optional text label onto a key.
 
@@ -147,6 +161,9 @@ class DeckController:
 
         highlight: optional RGB tuple to draw a coloured indicator bar at the
         top of the key (e.g. green for active state).
+
+        label_bg: optional RGB tuple; fills the label strip below the icon and
+        draws the label in bold dark text on it (marks the active nav key).
         """
         if pil_image is not None:
             source = pil_image
@@ -158,23 +175,24 @@ class DeckController:
         image = PILHelper.create_scaled_key_image(
             self.deck,
             source,
-            margins=[0, 0, 20 if label else 0, 0],
+            margins=[0, 0, LABEL_STRIP if label else 0, 0],
         )
         draw = ImageDraw.Draw(image)
 
         if highlight:
             draw.rectangle([(0, 0), (image.width, 4)], fill=highlight)
         if label:
-            try:
-                font = ImageFont.truetype("/usr/share/fonts/TTF/DejaVuSans.ttf", 12)
-            except OSError:
-                font = ImageFont.load_default()
+            if label_bg:
+                draw.rectangle(
+                    [(0, image.height - LABEL_STRIP), (image.width, image.height)],
+                    fill=label_bg,
+                )
             draw.text(
                 (image.width // 2, image.height - 5),
                 label,
-                font=font,
+                font=_font(BOLD_FONT_PATH if label_bg else FONT_PATH, 12),
                 anchor="mb",
-                fill="white",
+                fill=LABEL_ON_STRIP if label_bg else "white",
             )
 
         self.deck.set_key_image(key, PILHelper.to_native_key_format(self.deck, image))

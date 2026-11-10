@@ -2,7 +2,10 @@
 """DeckController key routing and page lifecycle, driven through _on_key the
 way the Stream Deck reader thread calls it. Rendering runs for real against a
 deck stub that accepts encoded key images."""
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 from main import DeckController
 from pages import BasePage
@@ -124,3 +127,43 @@ def test_on_key_error_keeps_deck_responsive(controller, capsys):
 
     assert controller.current_page is home
     assert "device unreachable" in capsys.readouterr().err
+
+
+# --- Active nav key: label strip in the accent colour (spec: style C).
+
+ACCENT = (110, 170, 255)
+BLACK = (0, 0, 0)
+STRIP_PIXEL = (3, 93)  # inside the 20 px label strip of a 96 px key, left of the text
+
+
+def key_pixel(ctrl, key, xy):
+    """Decode a key's native JPEG, undo the XL's flip, return the RGB at xy."""
+    img = Image.open(BytesIO(ctrl.deck.key_images[key])).convert("RGB")
+    img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    return img.getpixel(xy)
+
+
+def close_to(rgb, expected, tolerance=24):
+    return all(abs(a - b) <= tolerance for a, b in zip(rgb, expected))
+
+
+def test_active_nav_key_has_accent_label_strip(controller):
+    controller.pages = {"home": RecordingPage(controller),
+                        "spotify": RecordingPage(controller)}
+
+    press(controller, SPOTIFY)
+
+    assert close_to(key_pixel(controller, SPOTIFY, STRIP_PIXEL), ACCENT)
+    assert close_to(key_pixel(controller, HOME, STRIP_PIXEL), BLACK)
+
+
+def test_label_strip_moves_with_page_switch(controller):
+    controller.pages = {"home": RecordingPage(controller),
+                        "spotify": RecordingPage(controller)}
+
+    press(controller, SPOTIFY)
+    press(controller, HOME)
+
+    assert close_to(key_pixel(controller, HOME, STRIP_PIXEL), ACCENT)
+    assert close_to(key_pixel(controller, SPOTIFY, STRIP_PIXEL), BLACK)
