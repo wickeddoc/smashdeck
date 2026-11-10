@@ -67,8 +67,11 @@ def tiles_as_images(monkeypatch):
 def make_page(ctrl, monitor_cfg):
     ctrl.config = {"monitor": monitor_cfg}
     p = SimpleNamespace(sampler=FakeSampler(), weather=FakeWeather(), clock=Clock(), ctrl=ctrl)
+    # Run the weather fetch inline so these tests stay synchronous; the
+    # "slow" fixture below exercises the real background thread.
     p.page = MonitorPage(ctrl, sampler=p.sampler, fetch_weather=p.weather,
-                         clock=p.clock, utcnow=lambda: FIXED_NOW)
+                         clock=p.clock, utcnow=lambda: FIXED_NOW,
+                         start_thread=lambda fn: fn())
     return p
 
 
@@ -215,3 +218,96 @@ def test_repeated_poll_failures_log_one_traceback(p, monkeypatch, capsys):
 
     assert p.sampler.calls >= 3
     assert capsys.readouterr().err.count("Traceback") == 1
+
+
+# --- Weather fetch on its own thread: a stalled network must not hold up
+# the 2 s metric ticks or deactivate().
+
+class BlockingWeather(FakeWeather):
+    """A fetch that blocks until released, like a stalled network."""
+
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, lat, lon):
+        self.calls.append((lat, lon))
+        self.started.set()
+        self.release.wait(1.0)
+        return self.weather
+
+
+def fetch_threads():
+    return [t for t in threading.enumerate() if t.name == "monitor-weather" and t.is_alive()]
+
+
+def wait_until(condition, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return condition()
+
+
+@pytest.fixture
+def slow(ctrl):
+    """A page with real background threads and a blocking weather fetch."""
+    ctrl.config = {"monitor": {"disks": [{"name": "/", "path": "/"}], "weather": LOCATION}}
+    s = SimpleNamespace(sampler=FakeSampler(), weather=BlockingWeather(), clock=Clock(), ctrl=ctrl)
+    s.page = MonitorPage(ctrl, sampler=s.sampler, fetch_weather=s.weather,
+                         clock=s.clock, utcnow=lambda: FIXED_NOW)
+    yield s
+    s.weather.release.set()
+    wait_until(lambda: not fetch_threads())
+
+
+def test_tick_does_not_wait_for_a_slow_fetch(slow):
+    started = time.monotonic()
+    slow.page.tick()
+    assert time.monotonic() - started < 0.5
+    assert slow.weather.started.wait(1.0)  # the fetch runs in the background
+    assert shown(slow.ctrl, 8) == Tile("CPU", "50°", "°C", GREEN)
+    assert shown(slow.ctrl, 24) == WeatherTile("Now", "", "—", "")  # still pending
+
+
+def test_only_one_fetch_runs_at_a_time(slow):
+    slow.page.tick()
+    assert slow.weather.started.wait(1.0)
+    slow.clock.t += 3600  # long overdue, but the first fetch is still running
+    slow.page.tick()
+    assert len(slow.weather.calls) == 1
+
+
+def test_fetched_weather_is_drawn_on_the_next_tick(slow):
+    slow.page.tick()
+    assert slow.weather.started.wait(1.0)
+    slow.weather.release.set()
+    assert wait_until(lambda: not fetch_threads())
+    slow.page.tick()
+    assert shown(slow.ctrl, 24).label == "Now"
+    assert shown(slow.ctrl, 24).value != "—"
+
+
+def test_deactivate_does_not_wait_for_a_slow_fetch(slow):
+    slow.page.activate()
+    assert slow.weather.started.wait(1.0)
+    started = time.monotonic()
+    slow.page.deactivate()
+    assert time.monotonic() - started < 0.5
+    assert poll_threads() == []
+
+
+def test_weather_press_during_a_fetch_triggers_one_more(slow):
+    slow.page.tick()
+    assert slow.weather.started.wait(1.0)
+    slow.page.on_key(26)  # pressed while the first fetch is still running
+    slow.page.tick()
+    assert len(slow.weather.calls) == 1
+
+    slow.weather.release.set()
+    assert wait_until(lambda: not fetch_threads())
+    slow.page.tick()  # the remembered press starts a fresh fetch
+    assert wait_until(lambda: len(slow.weather.calls) == 2 and not fetch_threads())
+    slow.page.tick()  # not due and no new press: no third fetch
+    assert wait_until(lambda: not fetch_threads())
+    assert len(slow.weather.calls) == 2

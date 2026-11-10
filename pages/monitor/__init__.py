@@ -3,8 +3,10 @@
 
 Polls only while visible: activate() starts a thread that ticks every
 POLL_SECONDS, deactivate() stops it. Each tick redraws only the keys whose
-tile changed. Sensor reads and the weather HTTP call never run on the
-Stream Deck's key-callback thread.
+tile changed. Sensor reads never run on the Stream Deck's key-callback
+thread, and the weather HTTP call runs on its own short-lived thread so a
+slow network can't hold up the metric ticks or deactivate(). That thread
+only records the result; the poll thread draws it on its next tick.
 """
 from __future__ import annotations
 
@@ -28,9 +30,13 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _start_daemon(fn):
+    threading.Thread(target=fn, name="monitor-weather", daemon=True).start()
+
+
 class MonitorPage(BasePage):
     def __init__(self, controller, sampler=None, fetch_weather=None,
-                 clock=time.monotonic, utcnow=_utcnow):
+                 clock=time.monotonic, utcnow=_utcnow, start_thread=_start_daemon):
         super().__init__(controller)
         cfg = controller.config.get("monitor") or {}
         disks = (cfg.get("disks") or [])[:2]
@@ -42,12 +48,18 @@ class MonitorPage(BasePage):
         self._fetch_weather = fetch_weather or weather_api.fetch
         self._clock = clock
         self._utcnow = utcnow
+        self._start_thread = start_thread
 
         self._sample = SystemSample.placeholder([d["name"] for d in disks])
+        # Weather state is written by the fetch thread and read by the poll
+        # and key-callback threads; _weather_lock is never held during I/O.
+        self._weather_lock = threading.Lock()
         self._weather = None
         self._weather_at = 0.0  # clock() of the last successful fetch
         self._weather_due = 0.0  # clock() when the next fetch is due
         self._weather_failed = False
+        self._weather_inflight = False
+        self._weather_requested = False  # a weather key was pressed
 
         self._shown = {}  # key -> tile currently on the deck
         self._lock = threading.Lock()
@@ -61,7 +73,9 @@ class MonitorPage(BasePage):
 
     def on_key(self, key):
         if key in WEATHER_KEYS:
-            self._weather_due = 0.0  # the poll thread fetches on its next tick
+            # Picked up by the next tick, or after a fetch already running.
+            with self._weather_lock:
+                self._weather_requested = True
 
     def activate(self):
         self._sampler.reset()  # no rates averaged over the hidden period
@@ -97,34 +111,56 @@ class MonitorPage(BasePage):
             stop.wait(POLL_SECONDS)
 
     def tick(self, stop: threading.Event | None = None):
-        """One poll: sample the system, fetch weather if due, redraw changes."""
+        """One poll: sample the system, start a weather fetch if due, redraw."""
         self._sample = self._sampler.sample()
-        if self._has_location() and self._clock() >= self._weather_due:
-            self._refresh_weather()
+        self._start_weather_fetch_if_due()
         self._draw(full=False, stop=stop)
 
     def _has_location(self) -> bool:
         return self._lat is not None and self._lon is not None
 
-    def _refresh_weather(self):
-        try:
-            self._weather = self._fetch_weather(self._lat, self._lon)
-        except Exception as e:
-            print(f"monitor: weather fetch failed: {e!r}")
-            self._weather_failed = True
-            self._weather_due = self._clock() + WEATHER_RETRY
+    def _start_weather_fetch_if_due(self):
+        if not self._has_location():
             return
-        self._weather_at = self._clock()
-        self._weather_failed = False
-        self._weather_due = self._weather_at + WEATHER_EVERY
+        with self._weather_lock:
+            if self._weather_inflight:
+                return  # one fetch at a time; a press is kept for afterwards
+            if not (self._weather_requested or self._clock() >= self._weather_due):
+                return
+            self._weather_inflight = True
+            self._weather_requested = False
+        self._start_thread(self._fetch_weather_now)
+
+    def _fetch_weather_now(self):
+        """Runs on the fetch thread: fetch, then record the outcome. Never draws."""
+        weather, failure = None, None
+        try:
+            weather = self._fetch_weather(self._lat, self._lon)
+        except Exception as e:
+            failure = e
+        finally:
+            with self._weather_lock:
+                self._weather_inflight = False
+                now = self._clock()
+                if weather is not None:
+                    self._weather = weather
+                    self._weather_at = now
+                    self._weather_failed = False
+                    self._weather_due = now + WEATHER_EVERY
+                else:
+                    self._weather_failed = True
+                    self._weather_due = now + WEATHER_RETRY
+        if failure is not None:
+            print(f"monitor: weather fetch failed: {failure!r}")
 
     def _weather_view(self):
         """(weather to show, error text for key 24)."""
         if not self._has_location():
             return None, "no location"
-        if self._weather is not None and self._clock() - self._weather_at <= WEATHER_STALE:
-            return self._weather, None
-        return None, ("offline" if self._weather_failed else None)
+        with self._weather_lock:
+            if self._weather is not None and self._clock() - self._weather_at <= WEATHER_STALE:
+                return self._weather, None
+            return None, ("offline" if self._weather_failed else None)
 
     def _draw(self, full: bool, stop: threading.Event | None = None):
         weather, error = self._weather_view()

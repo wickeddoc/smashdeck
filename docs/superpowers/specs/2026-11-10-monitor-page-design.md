@@ -195,28 +195,32 @@ steps down until the text fits the key width. Weather tiles paste a
   inject fakes and fixed clocks; production passes nothing.
 - `tick(stop=None)`: one poll. The thread calls it every 2 s and tests call
   it directly. A tick whose `stop` event is already set draws nothing, so a
-  slow weather fetch that outlives `deactivate()` can't paint over the next page.
+  tick that outlives `deactivate()` can't paint over the next page.
 - `render()`: pushes every tile from the last data (all `—` before the first
   sample) and resets the diff cache. It's called by `switch_page` and makes
   no network or sensor calls, so it can't block the key callback.
 - `activate()`: starts the poll thread. `deactivate()` sets the stop event,
-  joins the thread (≤ 2.5 s) and keeps the last data for an instant redraw
-  on return.
-- Poll loop, every 2 s via `stop.wait(2.0)`: `sampler.sample()`, then fetch
-  weather if due, then `build_tiles` and push only keys whose tile changed
+  joins the thread (≤ 2.5 s, in practice one sensor read since the poll
+  thread never waits on the network) and keeps the last data for an instant
+  redraw on return.
+- Poll loop, every 2 s via `stop.wait(2.0)`: `sampler.sample()`, then start a
+  weather fetch if due, then `build_tiles` and push only keys whose tile changed
   (dataclass equality against the last pushed tile). A lock guards the push,
   because `render()` can run on the key-callback thread at the same time
   (re-pressing the Monitor nav key).
 - Weather is due 15 min after the last success, 60 s after a failure, or
-  immediately when a weather key (24–31) is pressed (`on_key` sets a flag the
-  poll thread picks up; the HTTP call never runs on the callback thread).
-  The fetch runs on the poll thread with a 5 s socket timeout. On a healthy
-  network it takes ~200 ms every 15 min; on a degraded one (packet loss,
-  stalled DNS, which the timeout does not bound) it can pause metric updates
-  for several seconds per attempt and make `deactivate()` wait up to its
-  2.5 s join. Accepted for now; moving the fetch to a short-lived background
-  thread is a tracked follow-up. A failure prints one line (`monitor: weather fetch
-  failed: ...`), not a traceback, since it repeats every 60 s while offline.
+  on the next tick after a weather key (24–31) is pressed (`on_key` sets a
+  "requested" flag; the HTTP call never runs on the callback thread).
+- The fetch runs on its own short-lived daemon thread (`monitor-weather`,
+  5 s socket timeout), so a slow or stalled network (including DNS, which
+  the timeout does not bound) never pauses the metric ticks or delays
+  `deactivate()`. Only one fetch runs at a time; a weather-key press during
+  a fetch is remembered and starts another fetch once it finishes. The
+  fetch thread only records the outcome under a small lock (never held
+  during I/O); the poll thread draws it on its next tick, at most 2 s later.
+  A fetch still running when the page is hidden just finishes and records
+  its result. A failure prints one line (`monitor: weather fetch failed:
+  ...`), not a traceback, since it repeats every 60 s while offline.
 - Weather data is kept on failure. After 3 h without a successful fetch, or
   if no location is configured, key 24 shows `error.png` with detail
   `offline` / `no location` and keys 25–31 show `—`.
