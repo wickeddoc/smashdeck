@@ -166,3 +166,6 @@ cython_debug/
 # Generated preview montage (not produced by generate_icons.py)
 icons/icon_preview.png
 
+
+# Brainstorming visual-companion mockups
+.superpowers/
