@@ -71,9 +71,10 @@ def test_system_row():
 
 
 @pytest.mark.parametrize("changes, key, color", [
-    ({"cpu_temp": 74.9}, 8, GREEN),
+    ({"cpu_temp": 74.4}, 8, GREEN),
+    ({"cpu_temp": 74.6}, 8, AMBER),  # shown as "75°", so classified as 75
     ({"cpu_temp": 75.0}, 8, AMBER),
-    ({"cpu_temp": 89.9}, 8, AMBER),
+    ({"cpu_temp": 89.4}, 8, AMBER),  # 89.9 would show "90°", i.e. RED
     ({"cpu_temp": 90.0}, 8, RED),
     ({"cpu_load": 70.0}, 9, AMBER),
     ({"gpu_temp": 85.0}, 11, RED),

@@ -154,7 +154,7 @@ def sampler(tmp_path, fake_psutil):
         disks=[{"name": "/", "path": "/"}, {"name": "Data", "path": "/data"}],
         hwmon_root=str(tmp_path),
         route_file=str(route),
-        clock=stepping_clock([0.0, 2.0]),
+        clock=stepping_clock([0.0, 2.0, 4.0]),
         gpu_query=no_gpu,
     )
 
@@ -182,6 +182,21 @@ def test_sampler_rates_need_two_samples(sampler, fake_psutil):
     assert second.cpu_load == 12.5
     assert (second.disk_read, second.disk_write) == (2_000_000.0, 500_000.0)
     assert (second.net_down, second.net_up) == (1_250_000.0, 250_000.0)
+
+
+def test_sampler_reset_drops_rate_history(sampler, fake_psutil):
+    sampler.sample()
+    fake_psutil["disk"].read_bytes = 4_000_000
+    fake_psutil["net"].bytes_recv = 2_500_000
+    assert sampler.sample().disk_read == 2_000_000.0
+
+    sampler.reset()  # page was hidden: don't average over the gap
+    fake_psutil["disk"].read_bytes = 9_000_000
+    fake_psutil["net"].bytes_recv = 9_000_000
+    third = sampler.sample()
+
+    assert (third.cpu_load, third.disk_read, third.disk_write) == (None, None, None)
+    assert (third.net_down, third.net_up) == (None, None)
 
 
 def test_sampler_logs_a_failing_source_once(sampler, capsys):

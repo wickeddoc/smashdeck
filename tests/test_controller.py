@@ -19,6 +19,15 @@ class ImageDeck:
 
     def __init__(self):
         self.key_images = {}
+        self.depth = 0  # nesting of `with deck:` (the library's update_lock)
+        self.writes_outside_lock = []
+
+    def __enter__(self):
+        self.depth += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.depth -= 1
 
     def key_count(self):
         return 32
@@ -28,6 +37,8 @@ class ImageDeck:
                 "flip": (True, True), "rotation": 0}
 
     def set_key_image(self, key, image):
+        if self.depth == 0:
+            self.writes_outside_lock.append(key)
         self.key_images[key] = image
 
 
@@ -177,3 +188,46 @@ def test_nav_key_6_opens_monitor_page(controller):
 
     assert controller.current_page is monitor
     assert close_to(key_pixel(controller, MONITOR, STRIP_PIXEL), ACCENT)
+
+
+# --- Signal shutdown must stop the visible page before start()'s finally
+# resets/closes the deck, or its thread can write to a reset/closed deck.
+
+def test_shutdown_deactivates_current_page_and_exits_zero(controller):
+    home = RecordingPage(controller)
+    controller.pages = {"home": home}
+    press(controller, HOME)
+
+    with pytest.raises(SystemExit) as exc:
+        controller._shutdown()
+
+    assert exc.value.code == 0
+    assert home.deactivations == 1
+
+
+def test_shutdown_still_exits_when_deactivate_raises(controller, capsys):
+    class Broken(RecordingPage):
+        def deactivate(self):
+            raise OSError("stuck thread")
+
+    controller.pages = {"home": Broken(controller)}
+    press(controller, HOME)
+
+    with pytest.raises(SystemExit) as exc:
+        controller._shutdown()
+
+    assert exc.value.code == 0
+    assert "stuck thread" in capsys.readouterr().err
+
+
+# --- An XL key image is several HID reports; the whole write must hold the
+# deck's update lock so the reader thread and a page thread can't interleave.
+
+def test_key_images_are_written_under_the_deck_lock(controller):
+    controller.pages = {"home": RecordingPage(controller)}
+
+    press(controller, HOME)
+
+    assert controller.deck.key_images  # nav bar was drawn
+    assert controller.deck.writes_outside_lock == []
+    assert controller.deck.depth == 0

@@ -116,12 +116,12 @@ def _system_tiles(s: SystemSample) -> dict[int, Tile]:
         return BLUE
 
     def lv(warn, crit):
-        return lambda v: level(v, warn, crit)
+        return lambda v: level(round(v), warn, crit)  # as displayed
 
     def vram_color(used_gb):
         if not s.vram_total_gb:
             return BLUE
-        return level(used_gb / s.vram_total_gb * 100, 80, 92)
+        return level(round(used_gb / s.vram_total_gb * 100), 80, 92)
 
     vram_unit = f"of {round(s.vram_total_gb)} GB" if s.vram_total_gb else "GB"
 

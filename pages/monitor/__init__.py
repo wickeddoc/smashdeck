@@ -64,6 +64,7 @@ class MonitorPage(BasePage):
             self._weather_due = 0.0  # the poll thread fetches on its next tick
 
     def activate(self):
+        self._sampler.reset()  # no rates averaged over the hidden period
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, args=(self._stop,), name="monitor-poll", daemon=True)
@@ -82,11 +83,17 @@ class MonitorPage(BasePage):
     # --- polling ---
 
     def _run(self, stop: threading.Event):
+        failing = False  # log the first failure of a streak, not every tick
         while not stop.is_set():
             try:
                 self.tick(stop)
+                if failing:
+                    print("monitor: poll recovered")
+                    failing = False
             except Exception:
-                traceback.print_exc()
+                if not failing:
+                    traceback.print_exc()
+                    failing = True
             stop.wait(POLL_SECONDS)
 
     def tick(self, stop: threading.Event | None = None):

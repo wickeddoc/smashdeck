@@ -73,14 +73,8 @@ class DeckController:
             )
 
         # Register clean shutdown
-        def shutdown(sig, frame):
-            print("\nShutting down...")
-            self.deck.reset()
-            self.deck.close()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, shutdown)  # Ctrl+C
-        signal.signal(signal.SIGTERM, shutdown)  # kill / systemd stop
+        signal.signal(signal.SIGINT, self._shutdown)  # Ctrl+C
+        signal.signal(signal.SIGTERM, self._shutdown)  # kill / systemd stop
 
         try:
             self.deck.reset()
@@ -114,6 +108,21 @@ class DeckController:
         finally:
             self.deck.reset()
             self.deck.close()
+
+    def _shutdown(self, sig=None, frame=None):
+        """Signal handler: stop the visible page, then unwind via SystemExit.
+
+        The deck is reset and closed exactly once, by start()'s finally.
+        Deactivating first keeps a page thread (Monitor's poll) from writing
+        to a reset or closed deck.
+        """
+        print("\nShutting down...")
+        try:
+            if self.current_page:
+                self.current_page.deactivate()
+        except Exception:
+            traceback.print_exc()
+        sys.exit(0)
 
     def switch_page(self, name):
         page = self.pages[name]
@@ -198,7 +207,12 @@ class DeckController:
                 fill=LABEL_ON_STRIP if label_bg else "white",
             )
 
-        self.deck.set_key_image(key, PILHelper.to_native_key_format(self.deck, image))
+        native = PILHelper.to_native_key_format(self.deck, image)
+        # An XL key image is several HID reports and the transport locks only
+        # per report: hold the deck's update lock so the reader thread (nav
+        # keys) and a page thread can't interleave one image's reports.
+        with self.deck:
+            self.deck.set_key_image(key, native)
 
     def _on_key(self, deck, key, state):
         if not state:  # key down only

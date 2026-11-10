@@ -210,8 +210,12 @@ steps down until the text fits the key width. Weather tiles paste a
 - Weather is due 15 min after the last success, 60 s after a failure, or
   immediately when a weather key (24–31) is pressed (`on_key` sets a flag the
   poll thread picks up; the HTTP call never runs on the callback thread).
-  The fetch runs on the poll thread with a 5 s timeout, so a slow API delays
-  one tick at most. A failure prints one line (`monitor: weather fetch
+  The fetch runs on the poll thread with a 5 s socket timeout. On a healthy
+  network it takes ~200 ms every 15 min; on a degraded one (packet loss,
+  stalled DNS, which the timeout does not bound) it can pause metric updates
+  for several seconds per attempt and make `deactivate()` wait up to its
+  2.5 s join. Accepted for now; moving the fetch to a short-lived background
+  thread is a tracked follow-up. A failure prints one line (`monitor: weather fetch
   failed: ...`), not a traceback, since it repeats every 60 s while offline.
 - Weather data is kept on failure. After 3 h without a successful fetch, or
   if no location is configured, key 24 shows `error.png` with detail

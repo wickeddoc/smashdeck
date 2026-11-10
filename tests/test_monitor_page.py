@@ -5,6 +5,7 @@ key's recorded "image" is the Tile it would show."""
 import json
 import os
 import threading
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -25,7 +26,11 @@ FIXED_NOW = datetime(2026, 11, 10, 14, 0, tzinfo=UTC)
 class FakeSampler:
     def __init__(self):
         self.calls = 0
+        self.resets = 0
         self.next = SystemSample(cpu_temp=50.0, ram_percent=30.0, disks=[("/", 50.0)])
+
+    def reset(self):
+        self.resets += 1
 
     def sample(self):
         self.calls += 1
@@ -186,3 +191,27 @@ def test_tick_after_stop_draws_nothing(p):
     stop.set()
     p.page.tick(stop)
     assert p.ctrl.pushes == []
+
+
+def test_activate_resets_sampler_rates(p):
+    p.page.activate()
+    p.page.deactivate()
+    assert p.sampler.resets == 1
+
+
+def test_repeated_poll_failures_log_one_traceback(p, monkeypatch, capsys):
+    monkeypatch.setattr(monitor, "POLL_SECONDS", 0.01)
+
+    def boom():
+        p.sampler.calls += 1
+        raise OSError("deck unplugged")
+
+    p.sampler.sample = boom
+    p.page.activate()
+    deadline = time.monotonic() + 2.0
+    while p.sampler.calls < 3 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    p.page.deactivate()
+
+    assert p.sampler.calls >= 3
+    assert capsys.readouterr().err.count("Traceback") == 1

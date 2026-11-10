@@ -163,6 +163,12 @@ class SystemSampler:
         self._cpu_primed = False
         self._failed: set[str] = set()
 
+    def reset(self):
+        """Forget rate history so the next sample() starts fresh (after the
+        page was hidden): rates and CPU load read None until a second sample."""
+        self._rates = {name: Rate() for name in self._rates}
+        self._cpu_primed = False
+
     def _try(self, name, fn, default=None):
         try:
             return fn()
