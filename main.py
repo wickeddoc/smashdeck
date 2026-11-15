@@ -2,7 +2,7 @@
 import os
 import signal
 import sys
-import threading
+import time
 import traceback
 from typing import Optional
 
@@ -10,6 +10,7 @@ import yaml
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
+from StreamDeck.Transport.Transport import TransportError
 
 ASSETS_PATH = os.path.join(os.path.dirname(__file__), "icons")
 
@@ -24,6 +25,9 @@ NAV_KEYS = {
 }
 
 RESTART_KEY = 7
+
+# How often the main thread checks that the deck is still plugged in.
+DECK_POLL_SECONDS = 1.0
 
 FONT_PATH = "/usr/share/fonts/TTF/DejaVuSans.ttf"
 BOLD_FONT_PATH = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
@@ -47,11 +51,20 @@ class DeckController:
         self._key_size = (72, 72)
         self.current_page = None
         self.pages = {}
+        self._restarting = False  # Restart key: deck closed, os.execv pending
 
-    def start(self):
+    def start(self) -> int:
+        """Open the first Stream Deck and run until it is unplugged.
+
+        Returns the process exit code: non-zero when no deck is found or the
+        deck went away, so a supervisor (the systemd user service,
+        Restart=on-failure) starts SmashDeck again. SIGINT/SIGTERM exit 0
+        via _shutdown.
+        """
         devices = DeviceManager().enumerate()
         if not devices:
-            raise RuntimeError("No Stream Deck found")
+            print("No Stream Deck found")
+            return 1
 
         self.deck = devices[0]
         self.deck.open()
@@ -76,52 +89,82 @@ class DeckController:
         signal.signal(signal.SIGINT, self._shutdown)  # Ctrl+C
         signal.signal(signal.SIGTERM, self._shutdown)  # kill / systemd stop
 
+        return self.run()
+
+    def run(self) -> int:
+        """Drive the opened deck until it is unplugged; returns the exit code."""
         try:
             self.deck.reset()
             self.deck.set_brightness(60)
             self.deck.set_key_callback(self._on_key)
-
-            # Register pages (imported from pages/)
-            from pages.home import HomePage
-            from pages.hue import HuePage
-            from pages.kasa import KasaPage
-            from pages.monitor import MonitorPage
-            from pages.spotify import SpotifyPage
-            from pages.tapo import TapoPage
-
-            self.pages = {
-                "home": HomePage(self),
-                "spotify": SpotifyPage(self),
-                "hue": HuePage(self),
-                "kasa": KasaPage(self),
-                "tapo": TapoPage(self),
-                "monitor": MonitorPage(self),
-            }
-
+            self.pages = self._build_pages()
             self.switch_page("home")
-
-            # Block main thread without busy-waiting
-            threading.Event().wait()
-
+            self._wait_while_connected()
+            print("Stream Deck disconnected; exiting so the service can restart SmashDeck")
+            return 1
         except Exception:
             traceback.print_exc()
+            return 1
         finally:
-            self.deck.reset()
-            self.deck.close()
+            self._deactivate_current_page()
+            self._release_deck()
+
+    def _build_pages(self):
+        from pages.home import HomePage
+        from pages.hue import HuePage
+        from pages.kasa import KasaPage
+        from pages.monitor import MonitorPage
+        from pages.spotify import SpotifyPage
+        from pages.tapo import TapoPage
+
+        return {
+            "home": HomePage(self),
+            "spotify": SpotifyPage(self),
+            "hue": HuePage(self),
+            "kasa": KasaPage(self),
+            "tapo": TapoPage(self),
+            "monitor": MonitorPage(self),
+        }
+
+    def _wait_while_connected(self):
+        """Block the main thread until the deck goes away.
+
+        The library's reader thread closes the device when a read fails
+        (is_open() turns False); connected() re-enumerates USB to catch an
+        unplug that doesn't surface as a read error. While a Restart re-exec
+        is pending the deck is closed on purpose, so keep waiting for execv.
+        Signals (SIGINT/SIGTERM) interrupt the sleep and unwind via _shutdown.
+        """
+        while self._restarting or (self.deck.is_open() and self.deck.connected()):
+            time.sleep(DECK_POLL_SECONDS)
+
+    def _deactivate_current_page(self):
+        """Stop the visible page's background work; safe to call twice."""
+        page, self.current_page = self.current_page, None
+        if page is None:
+            return
+        try:
+            page.deactivate()
+        except Exception:
+            traceback.print_exc()
+
+    def _release_deck(self):
+        """Reset and close the deck, tolerating one that is already gone."""
+        for release in (self.deck.reset, self.deck.close):
+            try:
+                release()
+            except TransportError as e:  # the deck is already unplugged
+                print(f"Stream Deck {release.__name__} skipped: {e!r}")
 
     def _shutdown(self, sig=None, frame=None):
         """Signal handler: stop the visible page, then unwind via SystemExit.
 
-        The deck is reset and closed exactly once, by start()'s finally.
+        The deck is reset and closed exactly once, by run()'s finally.
         Deactivating first keeps a page thread (Monitor's poll) from writing
         to a reset or closed deck.
         """
         print("\nShutting down...")
-        try:
-            if self.current_page:
-                self.current_page.deactivate()
-        except Exception:
-            traceback.print_exc()
+        self._deactivate_current_page()
         sys.exit(0)
 
     def switch_page(self, name):
@@ -241,6 +284,7 @@ class DeckController:
     def _restart(self):
         """Re-exec the running process in place after resetting the deck."""
         print("\nRestarting...")
+        self._restarting = True  # the main thread must not read this as an unplug
         try:
             if self.current_page:
                 self.current_page.deactivate()
@@ -248,9 +292,14 @@ class DeckController:
             self.deck.close()
         except Exception:
             traceback.print_exc()
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+        try:
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+        except Exception:
+            # The deck is closed now: let the main thread see that and exit
+            # non-zero, so the service restarts SmashDeck instead.
+            self._restarting = False
+            raise
 
 
 if __name__ == "__main__":
-    ctrl = DeckController()
-    ctrl.start()
+    sys.exit(DeckController().start())

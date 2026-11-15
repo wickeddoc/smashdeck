@@ -50,7 +50,8 @@ ruff check .
 ### Core (`main.py`)
 - `DeckController` — Central controller that owns the Stream Deck device, manages pages, handles key routing, and renders icon+label images onto keys.
 - Loads device config from `config.yaml`.
-- Signal handlers (SIGINT/SIGTERM) ensure clean shutdown (reset + close).
+- Signal handlers (SIGINT/SIGTERM) ensure clean shutdown (reset + close), exit code 0.
+- `start()` returns the process exit code. `run()` polls the deck once a second (`is_open()` and `connected()`) and returns 1 when it is unplugged; a missing deck at start-up or a start-up crash also return 1. A non-zero exit makes the systemd user service (`Restart=on-failure`) relaunch SmashDeck once the deck is back. A pending Restart re-exec (`_restarting`) is not treated as an unplug.
 
 ### Page System (`pages/`)
 - `BasePage` (ABC in `pages/__init__.py`) — abstract `render()` / `on_key(key)`, optional `activate()` / `deactivate()` lifecycle hooks (e.g. SpotifyPage starts/stops a DBus signal-listener thread), and `clear()` which wipes only the content area (keys 8–31), preserving the nav bar.

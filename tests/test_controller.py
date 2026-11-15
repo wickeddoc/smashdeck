@@ -2,12 +2,15 @@
 """DeckController key routing and page lifecycle, driven through _on_key the
 way the Stream Deck reader thread calls it. Rendering runs for real against a
 deck stub that accepts encoded key images."""
+import threading
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
 
-from main import DeckController
+import main
+from main import RESTART_KEY, DeckController, TransportError
 from pages import BasePage
 
 # NAV_KEYS indices, see main.py
@@ -21,6 +24,38 @@ class ImageDeck:
         self.key_images = {}
         self.depth = 0  # nesting of `with deck:` (the library's update_lock)
         self.writes_outside_lock = []
+        self.resets = 0
+        self.closes = 0
+        # None: always connected; n: reports unplugged after n connected() checks
+        self.connected_polls = None
+        self.vanish_on_unplug = False  # once unplugged, reset()/close() raise
+
+    def connected(self):
+        if self.connected_polls is None:
+            return True
+        self.connected_polls -= 1
+        plugged = self.connected_polls >= 0
+        if not plugged and self.vanish_on_unplug:
+            self.reset = self.close = self._gone
+        return plugged
+
+    def is_open(self):
+        return self.closes == 0
+
+    def _gone(self):
+        raise TransportError("No HID device.")
+
+    def reset(self):
+        self.resets += 1
+
+    def close(self):
+        self.closes += 1
+
+    def set_brightness(self, percent):
+        pass
+
+    def set_key_callback(self, callback):
+        pass
 
     def __enter__(self):
         self.depth += 1
@@ -203,6 +238,8 @@ def test_shutdown_deactivates_current_page_and_exits_zero(controller):
 
     assert exc.value.code == 0
     assert home.deactivations == 1
+    # The handler leaves reset/close to run()'s finally (exactly once).
+    assert (controller.deck.resets, controller.deck.closes) == (0, 0)
 
 
 def test_shutdown_still_exits_when_deactivate_raises(controller, capsys):
@@ -231,3 +268,83 @@ def test_key_images_are_written_under_the_deck_lock(controller):
     assert controller.deck.key_images  # nav bar was drawn
     assert controller.deck.writes_outside_lock == []
     assert controller.deck.depth == 0
+
+
+# --- Unplugging the deck must end the process with a non-zero code, so the
+# systemd user service (Restart=on-failure) brings SmashDeck back once the
+# deck is plugged in again; before, the main thread waited forever.
+
+@pytest.fixture
+def fast_poll(monkeypatch):
+    monkeypatch.setattr(main, "DECK_POLL_SECONDS", 0.001)
+
+
+def only_home(controller, monkeypatch):
+    home = RecordingPage(controller)
+    monkeypatch.setattr(DeckController, "_build_pages", lambda self: {"home": home})
+    return home
+
+
+def test_run_returns_1_when_the_deck_is_unplugged(controller, monkeypatch, fast_poll, capsys):
+    home = only_home(controller, monkeypatch)
+    controller.deck.connected_polls = 3
+
+    assert controller.run() == 1
+
+    assert (home.activations, home.deactivations) == (1, 1)
+    assert controller.deck.resets == 2  # at start-up, then on release
+    assert controller.deck.closes == 1
+    assert "disconnected" in capsys.readouterr().out
+
+
+def test_run_tolerates_releasing_a_deck_that_is_gone(controller, monkeypatch, fast_poll):
+    only_home(controller, monkeypatch)
+    controller.deck.connected_polls = 1
+    controller.deck.vanish_on_unplug = True
+
+    assert controller.run() == 1  # no TransportError escapes the release
+
+
+def test_run_returns_1_when_start_up_fails(controller, monkeypatch, fast_poll, capsys):
+    def broken(self):
+        raise OSError("bad config")
+
+    monkeypatch.setattr(DeckController, "_build_pages", broken)
+
+    assert controller.run() == 1
+    assert controller.deck.closes == 1
+    assert "bad config" in capsys.readouterr().err
+
+
+def test_start_without_a_deck_returns_1(controller, monkeypatch, capsys):
+    monkeypatch.setattr(main, "DeviceManager", lambda: SimpleNamespace(enumerate=list))
+
+    assert controller.start() == 1
+    assert "No Stream Deck found" in capsys.readouterr().out
+
+
+def test_wait_ignores_the_closed_deck_during_a_restart(controller, fast_poll):
+    controller.deck.connected_polls = 0  # reports unplugged on every check
+    controller._restarting = True  # Restart closed the deck and is re-exec'ing
+    waiter = threading.Thread(target=controller._wait_while_connected, daemon=True)
+    waiter.start()
+
+    waiter.join(0.1)
+    assert waiter.is_alive()
+
+    controller._restarting = False
+    waiter.join(1.0)
+    assert not waiter.is_alive()
+
+
+def test_failed_restart_exec_stops_waiting_for_it(controller, monkeypatch):
+    def no_exec(*args):
+        raise OSError("exec failed")
+
+    monkeypatch.setattr(main.os, "execv", no_exec)
+    controller.pages = {"home": RecordingPage(controller)}
+    press(controller, HOME)
+
+    press(controller, RESTART_KEY)  # _on_key logs the error, the deck stays usable
+
+    assert controller._restarting is False

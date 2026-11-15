@@ -74,10 +74,10 @@ The installer:
 It refuses to run while SmashDeck is already running outside systemd,
 because two instances can't share the deck.
 
-If the deck is unplugged at login, the service retries every 10 s until it
-appears. Unplugging the deck while SmashDeck runs leaves the service running
-but unable to reach the deck; after replugging, run
-`systemctl --user restart smashdeck`.
+Unplugging is handled automatically. If the deck is unplugged while SmashDeck
+runs, it notices within about a second and exits with a failure code. If the
+deck is missing at login, startup fails the same way. Either way, the service
+retries every 10 s and comes back as soon as the deck is plugged in again.
 
 ## Layout
 
