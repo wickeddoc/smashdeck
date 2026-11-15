@@ -1,0 +1,33 @@
+# SmashDeck as a systemd *user* service, tied to the graphical session:
+# starts when you log into your desktop (KDE Plasma, GNOME, ...), stops at
+# logout. A user service (not a system one) runs inside your session, so the
+# Spotify page can reach the session DBus.
+#
+# Template: deploy/install.sh fills in the repo and Python paths and installs
+# the result to ~/.config/systemd/user/smashdeck.service. Edit this file and
+# re-run the installer rather than editing the installed copy.
+
+[Unit]
+Description=SmashDeck Stream Deck controller
+Documentation=file://@REPO@/README.md
+PartOf=graphical-session.target
+After=graphical-session.target
+# Keep retrying (e.g. the deck is unplugged at login) instead of giving up.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart="@PYTHON@" "@REPO@/main.py"
+# Unbuffered so print() output reaches the journal immediately.
+Environment=PYTHONUNBUFFERED=1
+SyslogIdentifier=smashdeck
+# SIGTERM (systemctl stop, logout) is handled by main.py: it stops the
+# visible page, then resets and closes the deck. The deck's Restart key
+# re-execs the process in place, which keeps the same PID.
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

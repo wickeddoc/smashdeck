@@ -14,6 +14,8 @@ python main.py                     # run the app (requires a connected Stream De
 python device_info.py              # print diagnostic info about connected Stream Decks
 ```
 
+Deployment: `deploy/install.sh` installs a systemd **user** unit (template `deploy/smashdeck.service.in`, bound to `graphical-session.target`) so the app starts at desktop login and stops at logout; `deploy/uninstall.sh` removes it. Logs: `journalctl --user -u smashdeck`. The unit relies on `main.py` handling SIGTERM cleanly and on the Restart key's in-place `os.execv` (same PID).
+
 ## Regenerating Icons
 
 Icons are 144×144 PNGs (Stream Deck XL native resolution) generated with

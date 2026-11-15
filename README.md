@@ -43,6 +43,42 @@ python main.py          # main app
 python device_info.py   # diagnostics for connected Stream Decks
 ```
 
+### As a service at desktop login
+
+`deploy/` runs SmashDeck as a systemd **user** service bound to
+`graphical-session.target`. It starts when you log into your desktop
+(tested with KDE Plasma 6 on Wayland; any systemd-managed session works) and
+stops at logout, which resets the deck. It is a user service rather than a
+system one because it needs your session: the Spotify page talks to the
+session DBus, and the deck's device permissions are granted to the user
+logged in on the seat.
+
+```bash
+deploy/install.sh --dry-run          # show what would happen; changes nothing
+deploy/install.sh                    # install, enable at login, start now
+journalctl --user -u smashdeck -f    # logs
+systemctl --user restart smashdeck   # after pulling new code (or press Restart on the deck)
+deploy/uninstall.sh                  # stop, disable and remove the service
+```
+
+The installer:
+
+- finds the venv: `$SMASHDECK_PYTHON`, else `.venv/`, else the
+  virtualenvwrapper env named in a `.venv` file;
+- checks the dependencies and `config.yaml`;
+- installs `deploy/70-streamdeck.rules` with sudo if no Stream Deck udev rule
+  exists yet;
+- renders `deploy/smashdeck.service.in` into
+  `~/.config/systemd/user/smashdeck.service`, then enables and starts it.
+
+It refuses to run while SmashDeck is already running outside systemd,
+because two instances can't share the deck.
+
+If the deck is unplugged at login, the service retries every 10 s until it
+appears. Unplugging the deck while SmashDeck runs leaves the service running
+but unable to reach the deck; after replugging, run
+`systemctl --user restart smashdeck`.
+
 ## Layout
 
 Keys are numbered 0–31, left-to-right, top-to-bottom (4 rows × 8 columns).
@@ -83,6 +119,11 @@ pages/
     sources.py     psutil / hwmon / nvidia-smi -> SystemSample
     weather.py     Open-Meteo client (no API key)
     tiles.py       what each key shows (build_tiles) and how it is drawn
+deploy/            systemd user service for desktop login
+  install.sh       render + enable + start smashdeck.service (--dry-run)
+  uninstall.sh     stop, disable, remove it
+  smashdeck.service.in  unit template (paths filled in by install.sh)
+  70-streamdeck.rules   udev rule granting the seat user deck access
 tests/             pytest suite (FakeController/FakeDeck, no hardware needed)
 icons/             144×144 PNG key icons (XL native; auto-downscaled for
                    smaller decks)

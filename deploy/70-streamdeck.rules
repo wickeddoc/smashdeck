@@ -1,0 +1,4 @@
+# Let the user logged in on the seat open Elgato Stream Decks (vendor 0fd9)
+# without root. Installed to /etc/udev/rules.d/ by deploy/install.sh when no
+# Stream Deck rule exists yet.
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
