@@ -32,7 +32,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from PIL import Image, ImageOps
 
@@ -65,6 +65,13 @@ def _entry_key(artist: str) -> str:
 def _phrase(text: str) -> str:
     """A Lucene phrase query term for MusicBrainz search."""
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+class ServiceError(Exception):
+    """A request failed; names the host (never the URL: it carries the keys)."""
+
+    def __init__(self, host: str, error: Exception):
+        super().__init__(f"{host}: {error!r}")
 
 
 def _likes(thumb: dict) -> int:
@@ -145,8 +152,7 @@ class ArtistPhotos:
                 mbid = mbid or self._musicbrainz_id(artist)
                 photo = self._fanart_photo(mbid) if mbid else None
             except Exception as e:  # network or service trouble: retry later
-                # repr of urllib errors carries no URL, so no API key leaks
-                print(f"artist photos: lookup for {artist!r} failed: {e!r}")
+                print(f"artist photos: lookup for {artist!r} failed: {e}")
                 self._remember(key, None, self._clock() + RETRY_AFTER)
                 return None
             self._store(key, artist, mbid, photo)
@@ -154,8 +160,17 @@ class ArtistPhotos:
 
     # --- network ---
 
-    def _get(self, url: str) -> bytes:
-        return self._http(url, {"User-Agent": USER_AGENT})
+    def _get(self, url: str, missing_ok: bool = False) -> bytes | None:
+        """The response body; None for a 404 when missing_ok. Failures are
+        raised as ServiceError naming the host."""
+        try:
+            return self._http(url, {"User-Agent": USER_AGENT})
+        except urllib.error.HTTPError as e:
+            if missing_ok and e.code == 404:
+                return None
+            raise ServiceError(urlsplit(url).hostname, e) from None
+        except Exception as e:
+            raise ServiceError(urlsplit(url).hostname, e) from None
 
     def _musicbrainz_id(self, artist: str) -> str | None:
         wait = self._musicbrainz_ready - self._clock()
@@ -177,12 +192,10 @@ class ArtistPhotos:
         keys = {"api_key": self._api_key}
         if self._client_key:
             keys["client_key"] = self._client_key
-        try:
-            art = json.loads(self._get(f"{FANART}{mbid}?{urlencode(keys)}"))
-        except urllib.error.HTTPError as e:
-            if e.code == 404:  # fanart.tv has nothing for this artist
-                return None
-            raise
+        body = self._get(f"{FANART}{mbid}?{urlencode(keys)}", missing_ok=True)
+        if body is None:  # fanart.tv has nothing for this artist
+            return None
+        art = json.loads(body)
         thumbs = [t for t in art.get("artistthumb") or [] if t.get("url")]
         if not thumbs:
             return None

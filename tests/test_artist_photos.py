@@ -225,7 +225,9 @@ def test_network_trouble_is_retried_after_ten_minutes_not_a_week(env, host, erro
     env.clock.t += 10 * 60
     assert photos.known("Daft Punk") == (False, None)
     assert env.photos().known("Daft Punk") == (False, None)  # nothing written to disk
-    assert "Daft Punk" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Daft Punk" in out
+    assert host in out  # which service failed
 
 
 def test_failures_never_log_the_api_keys(env, capsys):

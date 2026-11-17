@@ -271,6 +271,7 @@ class SpotifyWatcher:
         self._report_lock = threading.Lock()  # one on_change at a time
         self._artist = ""  # lead artist of the last report
         self._artist_photo: Optional[Image.Image] = None
+        self._looking_up: Optional[str] = None  # artist whose lookup runs
         self._mpris: Optional[SpotifyMpris] = None
         self._stop: Optional[threading.Event] = None
         self._thread: Optional[threading.Thread] = None
@@ -348,6 +349,7 @@ class SpotifyWatcher:
         self._art = None
         self._artist = ""
         self._artist_photo = None
+        self._looking_up = None
 
     def snapshot(self) -> PlayerSnapshot:
         """The player state right now, which the caller is about to show: the
@@ -371,20 +373,25 @@ class SpotifyWatcher:
         return False
 
     def _refresh_artist(self, snap: PlayerSnapshot):
-        """On a new lead artist, take its photo from the cache (or none yet).
-        Returns (photo changed, artist to look up or None). Call with
-        _report_lock held: the lookup thread updates the same state."""
+        """Take the lead artist's photo from the cache, or ask for a lookup:
+        on a new artist, and again on later reports while it has no photo,
+        so a lookup that hit network trouble is retried once ArtistPhotos'
+        back-off ends (known() stays True until then). Returns (photo
+        changed, artist to look up or None). Call with _report_lock held:
+        the lookup thread updates the same state."""
         name = snap.lead_artist
-        if name == self._artist:
-            return False, None
         before = self._artist_photo
-        self._artist, self._artist_photo, lookup = name, None, None
-        if name and self._photos is not None:
+        if name != self._artist:
+            self._artist, self._artist_photo = name, None
+        elif before is not None:
+            return False, None  # already showing this artist's photo
+        lookup = None
+        if name and self._photos is not None and self._looking_up != name:
             known, photo = self._photos.known(name)
             if known:
                 self._artist_photo = photo
             else:
-                lookup = name
+                lookup = self._looking_up = name
         return self._artist_photo is not before, lookup
 
     def _report(self, stop: threading.Event, snap: PlayerSnapshot, force: bool):
@@ -406,11 +413,11 @@ class SpotifyWatcher:
             photo = self._photos.lookup(name)
         except Exception:
             traceback.print_exc()
-            return
-        if photo is None:
-            return
+            photo = None
         with self._report_lock:
-            if stop.is_set() or self._artist != name:
+            if self._looking_up == name:
+                self._looking_up = None
+            if photo is None or stop.is_set() or self._artist != name:
                 return  # stopped, or another artist is playing by now
             self._artist_photo = photo
             self._on_change(self._last, self._art, photo)

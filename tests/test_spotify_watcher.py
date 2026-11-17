@@ -345,3 +345,34 @@ def test_snapshot_reads_all_artists_and_the_lead_artist(artists, joined, lead):
     mpris._conn = FakeConn({"Metadata": ("a{sv}", {"xesam:artist": artists})})
     snap = mpris.snapshot()
     assert (snap.artist, snap.lead_artist) == (joined, lead)
+
+
+# --- retrying after network trouble ---------------------------------------------
+
+def test_a_failed_lookup_is_retried_on_a_later_report_for_the_same_artist(ph):
+    ph.watcher.start()
+    assert wait_until(lambda: ph.pending)
+    ph.run_lookups()  # nothing found and nothing cached: e.g. a 503
+    ph.fake_photos.found["Zombie Hyperdrive"] = "photo of ZH"  # service is back
+    ph.mpris.props_changed(title="Next song", art_url="https://art/2")  # same artist
+    assert wait_until(lambda: ph.pending)
+    ph.run_lookups()
+    assert ph.photos[-1] == "photo of ZH"
+
+
+def test_no_second_lookup_while_one_is_running(ph):
+    ph.watcher.start()
+    assert wait_until(lambda: ph.pending)
+    ph.mpris.props_changed(title="Next song", art_url="https://art/2")  # same artist
+    assert wait_until(lambda: len(ph.changes) == 2)
+    assert len(ph.pending) == 1
+
+
+def test_an_artist_known_to_have_no_photo_is_not_looked_up_again(ph):
+    ph.fake_photos.cached["Zombie Hyperdrive"] = None  # "no photo", remembered
+    ph.watcher.start()
+    assert wait_until(lambda: ph.changes)
+    ph.mpris.props_changed(title="Next song", art_url="https://art/2")
+    assert wait_until(lambda: len(ph.changes) == 2)
+    assert ph.pending == []
+    assert ph.fake_photos.lookups == []
