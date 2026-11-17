@@ -1,10 +1,10 @@
 # pages/home.py
 """Home page: an at-a-glance overview plus deck brightness.
 
-Row 2 shows CPU and GPU temperature and the current weather (the Monitor
-page's own tiles); row 3 Spotify play/pause, the artist (its photo when
+Row 2 shows CPU and GPU temperature, the current weather and tomorrow's
+(the Monitor page's own tiles); row 3 Spotify play/pause, the artist (its photo when
 artist photos are on), and the song as its album artwork. The last column, under Restart, holds brightness 33/66/100 %.
-Pressing a temperature or the weather opens the Monitor page; pressing the
+Pressing a temperature or a weather key opens the Monitor page; pressing the
 artist or the song opens the Spotify page.
 
 While visible, a home-poll thread samples the temperatures every POLL_SECONDS
@@ -21,16 +21,22 @@ from datetime import UTC, datetime
 from pages import BasePage
 from pages.faces import SPOTIFY_GREEN, PictureFace, render_face
 from pages.monitor.sources import SystemSample, SystemSampler
-from pages.monitor.tiles import CPU_TEMP_KEY, GPU_TEMP_KEY, WEATHER_NOW_KEY, build_tiles
+from pages.monitor.tiles import (
+    CPU_TEMP_KEY,
+    GPU_TEMP_KEY,
+    WEATHER_NOW_KEY,
+    WEATHER_TOMORROW_KEY,
+    build_tiles,
+)
 from pages.monitor.weather_feed import WeatherFeed
 from pages.spotify import PlayerSnapshot, SpotifyWatcher
 
 POLL_SECONDS = 2.0
 BRIGHTNESS_KEYS = {15: 33, 23: 66, 31: 100}  # last column, under Restart
-CPU_KEY, GPU_KEY, WEATHER_KEY = 8, 9, 10
+CPU_KEY, GPU_KEY, WEATHER_KEY, TOMORROW_KEY = 8, 9, 10, 11
 PLAY_KEY, ARTIST_KEY, SONG_KEY = 16, 17, 18
 OPENS = {CPU_KEY: "monitor", GPU_KEY: "monitor", WEATHER_KEY: "monitor",
-         ARTIST_KEY: "spotify", SONG_KEY: "spotify"}
+         TOMORROW_KEY: "monitor", ARTIST_KEY: "spotify", SONG_KEY: "spotify"}
 BLACK = (0, 0, 0)
 _UNSHOWN = object()
 
@@ -162,6 +168,7 @@ class HomePage(BasePage):
             CPU_KEY: tiles[CPU_TEMP_KEY],
             GPU_KEY: tiles[GPU_TEMP_KEY],
             WEATHER_KEY: tiles[WEATHER_NOW_KEY],
+            TOMORROW_KEY: tiles[WEATHER_TOMORROW_KEY],
             PLAY_KEY: PlayFace(snap.status == "Playing"),
             ARTIST_KEY: PictureFace("Artist", snap.artist, photo) if snap.artist else None,
             SONG_KEY: PictureFace("Song", snap.title, art) if (snap.title or art) else None,

@@ -143,7 +143,7 @@ def test_brightness_key_sets_deck_brightness(p, key, percent):
 
 
 def test_unused_keys_do_nothing(p):
-    p.page.on_key(11)  # was 100 % brightness
+    p.page.on_key(12)
     p.page.on_key(20)
     assert p.ctrl.deck.brightness is None
     assert not hasattr(p.ctrl, "switched_to")
@@ -165,6 +165,16 @@ def test_tick_shows_cpu_and_gpu_temperature_and_the_weather(p):
     assert shown(p.ctrl, 10).label == "Now"
     assert shown(p.ctrl, 10).value != "—"
     assert p.fetch.calls == 1
+
+
+def test_tomorrows_weather_sits_next_to_the_current_weather(p):
+    p.page.render()
+    assert (shown(p.ctrl, 11).label, shown(p.ctrl, 11).value) == ("Tomorrow", "—")
+    p.page.tick()
+    tomorrow = p.fetch.weather.tomorrow
+    assert shown(p.ctrl, 11).label == "Tomorrow"
+    assert shown(p.ctrl, 11).value == f"{round(tomorrow.t_max)}° / {round(tomorrow.t_min)}°"
+    assert shown(p.ctrl, 11).icon != ""
 
 
 def test_temperatures_use_the_monitor_colours(p):
@@ -194,7 +204,7 @@ def test_weather_is_shared_not_refetched(p):
     assert p.fetch.calls == 1
 
 
-@pytest.mark.parametrize("key", [8, 9, 10])
+@pytest.mark.parametrize("key", [8, 9, 10, 11])
 def test_monitor_keys_open_the_monitor_page(p, key):
     p.page.on_key(key)
     assert p.ctrl.switched_to == "monitor"
@@ -346,4 +356,4 @@ def test_render_redraws_everything_again(p):
     p.page.tick()
     p.ctrl.pushes.clear()
     p.page.render()  # e.g. the Home nav key pressed again
-    assert {8, 9, 10, 15, 16, 17, 18, 23, 31} <= set(p.ctrl.pushes)
+    assert {8, 9, 10, 11, 15, 16, 17, 18, 23, 31} <= set(p.ctrl.pushes)

@@ -92,8 +92,9 @@ Keys are numbered 0–31, left-to-right, top-to-bottom (4 rows × 8 columns).
 
 Per-page content:
 
-- **Home** — an overview. Row 2: CPU and GPU temperature and the current
-  weather (the Monitor page's tiles; press one to open Monitor). Row 3:
+- **Home** — an overview. Row 2: CPU and GPU temperature, the current
+  weather and tomorrow's (the Monitor page's tiles; press one to open
+  Monitor). Row 3:
   Spotify play/pause, the artist (its photo, if artist photos are set up), and
   the song as its album artwork with the title on it (press artist or song to
   open Spotify). Brightness 33/66/100 %

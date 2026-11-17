@@ -31,6 +31,7 @@ WEATHER_KEYS = range(24, 32)
 CPU_TEMP_KEY = 8
 GPU_TEMP_KEY = 11
 WEATHER_NOW_KEY = 24
+WEATHER_TOMORROW_KEY = 30
 
 
 @dataclass(frozen=True)
@@ -175,7 +176,7 @@ def _weather_tiles(w: Weather | None, now_utc: datetime,
             27: Tile("Wind", DASH, "", GREY),
             28: Tile("Rain", DASH, "", GREY),
             29: Tile("UV", DASH, "", GREY),
-            30: WeatherTile("Tomorrow", "", DASH, ""),
+            WEATHER_TOMORROW_KEY: WeatherTile("Tomorrow", "", DASH, ""),
             31: Tile("Sun", DASH, "", GREY),
         }
 
@@ -193,7 +194,7 @@ def _weather_tiles(w: Weather | None, now_utc: datetime,
         27: Tile(f"Wind {compass(w.wind_dir)}", _int(w.wind_speed), "km/h", WHITE),
         28: Tile("Rain", rain_today, "% today", WHITE),
         29: Tile("UV", str(uv_level), uv_text, uv_color),
-        30: WeatherTile("Tomorrow", condition_icon(tomorrow.code, True),
+        WEATHER_TOMORROW_KEY: WeatherTile("Tomorrow", condition_icon(tomorrow.code, True),
                         f"{_deg(tomorrow.t_max)} / {_deg(tomorrow.t_min)}", rain_tomorrow),
         31: _sun_tile(w, local_now),
     }
