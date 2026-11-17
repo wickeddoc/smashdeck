@@ -90,7 +90,12 @@ Keys are numbered 0–31, left-to-right, top-to-bottom (4 rows × 8 columns).
 
 Per-page content:
 
-- **Home** — brightness keys 8–11 (25/50/75/100 %)
+- **Home** — an overview. Row 2: CPU and GPU temperature and the current
+  weather (the Monitor page's tiles; press one to open Monitor). Row 3:
+  Spotify play/pause, the artist, and the song as its album artwork with the
+  title on it (press artist or song to open Spotify). Brightness 33/66/100 %
+  in the last column (keys 15, 23, 31), under Restart. Everything updates
+  live while Home is visible.
 - **Spotify** — controls on row 2, artist/title labels, playlists on keys
   24–28, cover art on key 31
 - **Hue** — rooms on row 2, lights of the selected room on row 3, scenes on
@@ -106,11 +111,12 @@ device_info.py     Stream Deck diagnostics
 config.yaml        Local config (gitignored — see config.yaml.dist)
 pages/
   __init__.py      BasePage ABC (render / on_key / activate / deactivate / clear)
-  home.py          HomePage — deck brightness keys
+  home.py          HomePage — overview (temperatures, weather, Spotify) and
+                   brightness keys
   spotify.py       SpotifyPage — DBus/MPRIS2 via jeepney: play/pause, next,
                    prev, shuffle, repeat, volume, playlists (OpenUri), cover
-                   art on key 31, with a PropertiesChanged signal listener
-                   for auto-refresh
+                   art on key 31; SpotifyWatcher, the PropertiesChanged
+                   listener it shares with Home, keeps both up to date
   hue.py           HuePage — rooms (row 2), lights of selected room (row 3),
                    scenes (row 4); lazy bridge connect with error fallback
   kasa.py          KasaPage — toggle Kasa devices
@@ -118,6 +124,7 @@ pages/
   monitor/         MonitorPage — PC metrics + weather (nav key 6)
     sources.py     psutil / hwmon / nvidia-smi -> SystemSample
     weather.py     Open-Meteo client (no API key)
+    weather_feed.py  the weather reading Home and Monitor share
     tiles.py       what each key shows (build_tiles) and how it is drawn
 deploy/            systemd user service for desktop login
   install.sh       render + enable + start smashdeck.service (--dry-run)

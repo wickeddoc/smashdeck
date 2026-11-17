@@ -563,9 +563,8 @@ if __name__ == "__main__":
     icon_hue_logo()
     icon_light_on()
     icon_light_off()
-    icon_brightness(0.25, "brightness_25.png")
-    icon_brightness(0.50, "brightness_50.png")
-    icon_brightness(0.75, "brightness_75.png")
+    icon_brightness(0.33, "brightness_33.png")
+    icon_brightness(0.66, "brightness_66.png")
     icon_brightness(1.00, "brightness_100.png")
 
     print("\nMusic:")

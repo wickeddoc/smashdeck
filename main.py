@@ -114,16 +114,19 @@ class DeckController:
         from pages.hue import HuePage
         from pages.kasa import KasaPage
         from pages.monitor import MonitorPage
+        from pages.monitor.weather_feed import WeatherFeed
         from pages.spotify import SpotifyPage
         from pages.tapo import TapoPage
 
+        # One weather reading for Home and Monitor: switching doesn't refetch.
+        weather = WeatherFeed.from_config(self.config.get("monitor") or {})
         return {
-            "home": HomePage(self),
+            "home": HomePage(self, weather=weather),
             "spotify": SpotifyPage(self),
             "hue": HuePage(self),
             "kasa": KasaPage(self),
             "tapo": TapoPage(self),
-            "monitor": MonitorPage(self),
+            "monitor": MonitorPage(self, weather=weather),
         }
 
     def _wait_while_connected(self):

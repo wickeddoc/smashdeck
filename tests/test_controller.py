@@ -348,3 +348,10 @@ def test_failed_restart_exec_stops_waiting_for_it(controller, monkeypatch):
     press(controller, RESTART_KEY)  # _on_key logs the error, the deck stays usable
 
     assert controller._restarting is False
+
+
+# --- Home and Monitor show the same weather: one feed, fetched once.
+
+def test_home_and_monitor_share_one_weather_feed(controller):
+    pages = controller._build_pages()
+    assert pages["home"].weather is pages["monitor"].weather

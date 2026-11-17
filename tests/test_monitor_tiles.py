@@ -10,6 +10,7 @@ from pages.monitor.tiles import (
     AMBER,
     BLANK,
     BLUE,
+    BOLD,
     GREEN,
     GREY,
     RED,
@@ -17,6 +18,7 @@ from pages.monitor.tiles import (
     Tile,
     WeatherTile,
     build_tiles,
+    fit_font,
     fmt_disk_rate,
     fmt_net_rate,
     render_tile,
@@ -218,3 +220,8 @@ def test_render_weather_tile_draws_icon():
 
 def test_render_blank_tile_is_black():
     assert render_tile(BLANK).getbbox() is None
+
+
+def test_fit_font_stops_shrinking_at_min_size():
+    assert fit_font("x" * 200, BOLD, 20, 100, min_size=16).size == 16
+    assert fit_font("x", BOLD, 20, 100, min_size=16).size == 20

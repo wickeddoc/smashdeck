@@ -12,7 +12,7 @@ import threading
 import traceback
 import urllib.request
 from dataclasses import dataclass
-from queue import Empty
+from queue import Empty, Full
 from typing import Optional
 
 from jeepney import DBusAddress, MatchRule, new_method_call
@@ -226,107 +226,137 @@ class SpotifyMpris:
             pass
 
 
-class SpotifyPage(BasePage):
-    def __init__(self, controller):
-        super().__init__(controller)
+def fetch_art(url: str) -> Optional[Image.Image]:
+    """Fetch and decode a cover-art image. Returns None on any failure."""
+    if not url:
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = resp.read()
+        return Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+class SpotifyWatcher:
+    """Follows Spotify while started: one MPRIS connection plus a listener
+    thread that calls ``on_change(snapshot, cover_art)`` whenever the player
+    state or the cover art changes (track skipped in the Spotify app, play
+    pressed elsewhere, Spotify restarted). Used by the Spotify and Home pages.
+
+    on_change runs on the listener thread and is never called once stop()
+    has begun. The cover art is fetched on that thread too, so start() never
+    waits on the network.
+    """
+
+    def __init__(self, on_change, connect=SpotifyMpris, fetch_art=fetch_art):
+        self._on_change = on_change
+        self._connect = connect
+        self._fetch_art = fetch_art
         self._mpris: Optional[SpotifyMpris] = None
-        self._last_state: Optional[PlayerSnapshot] = None
         self._stop: Optional[threading.Event] = None
         self._thread: Optional[threading.Thread] = None
-        self._props_cm = None
+        self._filters = []  # open filter context managers
         self._props_q = None
-        self._name_cm = None
-        self._name_q = None
-        self._art_url: str = ""
-        self._art_image: Optional[Image.Image] = None
-        spotify_cfg = controller.config.get("spotify", {})
-        self._playlists = spotify_cfg.get("playlists", [])[: len(PLAYLIST_KEYS)]
+        self._last: Optional[PlayerSnapshot] = None  # last state a page has seen
+        self._art_url = ""
+        self._art: Optional[Image.Image] = None
 
-    @staticmethod
-    def _fetch_art(url: str) -> Optional[Image.Image]:
-        """Fetch and decode a cover-art image. Returns None on any failure."""
-        if not url:
-            return None
+    @property
+    def mpris(self) -> Optional[SpotifyMpris]:
+        """The open connection, for player commands; None when stopped."""
+        return self._mpris
+
+    @property
+    def art(self) -> Optional[Image.Image]:
+        """Cover art of the current track, once fetched."""
+        return self._art
+
+    def start(self) -> PlayerSnapshot:
+        """Connect, subscribe and start listening; returns the current state.
+        Raises if the session bus can't be reached (nothing is left open)."""
+        stop = threading.Event()
+        self._stop = stop
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = resp.read()
-            return Image.open(io.BytesIO(data)).convert("RGB")
+            self._mpris = self._connect()
+            self._props_q = self._subscribe(_props_rule())
+            name_q = self._subscribe(_name_owner_rule())
         except Exception:
-            traceback.print_exc()
-            return None
+            self.stop()
+            raise
+        snap = self.snapshot()
+        self._thread = threading.Thread(
+            target=self._listen, args=(stop, self._mpris, self._props_q, name_q),
+            name="spotify-listener", daemon=True)
+        self._thread.start()
+        return snap
+
+    def _subscribe(self, rule):
+        cm, q = self._mpris.subscribe(rule)
+        self._filters.append(cm)
+        return q
+
+    def stop(self):
+        if self._stop is not None:
+            self._stop.set()
+        if self._props_q is not None:
+            try:
+                self._props_q.put_nowait(None)  # wake the listener now
+            except Full:
+                pass  # a pending signal wakes it just the same
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        for cm in self._filters:
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:
+                pass
+        self._filters = []
+        self._props_q = None
+        if self._mpris is not None:
+            self._mpris.close()
+            self._mpris = None
+        self._stop = None
+        self._last = None
+        self._art_url = ""
+        self._art = None
+
+    def snapshot(self) -> PlayerSnapshot:
+        """The player state right now, which the caller is about to show: the
+        listener won't report it again. The empty player when stopped."""
+        mpris = self._mpris
+        snap = mpris.snapshot() if mpris is not None else PlayerSnapshot()
+        self._last = snap
+        return snap
 
     def _refresh_art(self, snap: PlayerSnapshot) -> bool:
         """Refetch cover art if the snapshot's URL differs from the cached one.
 
         Returns True if the cache was updated, False if the URL was unchanged.
-        Note: ``_art_url`` is set even on fetch failure, so we won't retry
-        until the URL actually changes again.
+        The URL is remembered even when the fetch fails, so a broken cover
+        isn't retried until the track changes.
         """
         if snap.art_url != self._art_url:
             self._art_url = snap.art_url
-            self._art_image = self._fetch_art(snap.art_url)
+            self._art = self._fetch_art(snap.art_url)
             return True
         return False
 
-    def activate(self):
-        self._mpris = SpotifyMpris()
-        self._stop = threading.Event()
-        self._props_cm, self._props_q = self._mpris.subscribe(_props_rule())
-        self._name_cm, self._name_q = self._mpris.subscribe(_name_owner_rule())
-        self._last_state = self._mpris.snapshot()
-        # Initial render shows controls + labels with key 31 blank. The listener
-        # thread fetches the cover art and re-renders, so activate() doesn't
-        # block the main thread on the HTTPS round-trip.
-        self.render()
-        self._thread = threading.Thread(target=self._listen, daemon=True)
-        self._thread.start()
+    def _report(self, stop: threading.Event, snap: PlayerSnapshot, force: bool):
+        art_updated = self._refresh_art(snap)
+        changed = force or art_updated or snap != self._last
+        self._last = snap
+        # The stop check guards against stop() starting during a slow cover
+        # fetch: the page may no longer be the one on the deck.
+        if changed and not stop.is_set():
+            self._on_change(snap, self._art)
 
-    def deactivate(self):
-        if self._stop is not None:
-            self._stop.set()
-        # Listener wakes within the 0.5s queue.get timeout and exits because
-        # _stop is set. Then we tear down the filters and close the conn.
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-            self._thread = None
-        if self._props_cm is not None:
-            try:
-                self._props_cm.__exit__(None, None, None)
-            except Exception:
-                pass
-            self._props_cm = None
-        if self._name_cm is not None:
-            try:
-                self._name_cm.__exit__(None, None, None)
-            except Exception:
-                pass
-            self._name_cm = None
-        self._props_q = None
-        self._name_q = None
-        if self._mpris is not None:
-            self._mpris.close()
-            self._mpris = None
-        self._stop = None
-        self._last_state = None
-        self._art_url = ""
-        self._art_image = None
-
-    def _listen(self):
-        """Block on filter queues; re-render when state actually changes."""
-        stop = self._stop
-        props_q = self._props_q
-        name_q = self._name_q
-        mpris = self._mpris
-        if stop is None or props_q is None or name_q is None or mpris is None:
-            return
-        # Initial cover-art fetch on the listener thread so activate() doesn't
-        # block the main thread. If the URL is new, render once with the art.
-        # The stop check guards against deactivate() firing during a slow fetch
-        # — without it, we could draw onto a page that's no longer active.
+    def _listen(self, stop, mpris, props_q, name_q):
+        """Block on the filter queues; report when state actually changes."""
         try:
-            snap = mpris.snapshot()
-            if self._refresh_art(snap) and not stop.is_set():
-                self.render(snap)
+            self._report(stop, mpris.snapshot(), force=False)  # initial cover
         except Exception:
             traceback.print_exc()
         while not stop.is_set():
@@ -335,7 +365,7 @@ class SpotifyPage(BasePage):
             try:
                 props_q.get(timeout=0.5)
                 got_signal = True
-                # Drain anything that came in while we were rendering.
+                # Drain anything that came in while we were reporting.
                 while True:
                     try:
                         props_q.get_nowait()
@@ -343,6 +373,8 @@ class SpotifyPage(BasePage):
                         break
             except Empty:
                 pass
+            if stop.is_set():
+                break
             try:
                 while True:
                     name_q.get_nowait()
@@ -354,23 +386,41 @@ class SpotifyPage(BasePage):
             if not got_signal:
                 continue
             try:
-                snap = mpris.snapshot()
-                art_updated = self._refresh_art(snap)
-                if force or art_updated or snap != self._last_state:
-                    self.render(snap)
+                self._report(stop, mpris.snapshot(), force)
             except Exception:
                 traceback.print_exc()
 
+
+class SpotifyPage(BasePage):
+    def __init__(self, controller, watcher=None):
+        super().__init__(controller)
+        self._watcher = watcher or SpotifyWatcher(self._on_change)
+        self._mpris: Optional[SpotifyMpris] = None
+        spotify_cfg = controller.config.get("spotify", {})
+        self._playlists = spotify_cfg.get("playlists", [])[: len(PLAYLIST_KEYS)]
+
+    def _on_change(self, snap: PlayerSnapshot, art):
+        self.render(snap)
+
+    def activate(self):
+        snap = self._watcher.start()
+        self._mpris = self._watcher.mpris
+        # Initial render shows controls + labels with key 31 blank. The
+        # watcher fetches the cover art on its thread and reports back, so
+        # activate() doesn't block the main thread on the HTTPS round-trip.
+        self.render(snap)
+
+    def deactivate(self):
+        self._watcher.stop()
+        self._mpris = None
+
     def _snap(self) -> PlayerSnapshot:
-        if self._mpris is None:
-            return PlayerSnapshot()
-        return self._mpris.snapshot()
+        return self._watcher.snapshot()
 
     def render(self, snap: Optional[PlayerSnapshot] = None):
         self.clear()
         if snap is None:
             snap = self._snap()
-        self._last_state = snap
 
         playing = snap.status == "Playing"
         player_status = "pause.png" if playing else "play.png"
@@ -399,7 +449,7 @@ class SpotifyPage(BasePage):
             self.ctrl.set_key_image(
                 PLAYLIST_KEYS[i], f"playlist_{i + 1}.png", pl["name"][:12]
             )
-        self.ctrl.set_key_image(31, pil_image=self._art_image)
+        self.ctrl.set_key_image(31, pil_image=self._watcher.art)
 
     def on_key(self, key):
         mpris = self._mpris

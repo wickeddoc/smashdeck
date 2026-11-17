@@ -69,7 +69,7 @@ def make_page(ctrl, monitor_cfg):
     p = SimpleNamespace(sampler=FakeSampler(), weather=FakeWeather(), clock=Clock(), ctrl=ctrl)
     # Run the weather fetch inline so these tests stay synchronous; the
     # "slow" fixture below exercises the real background thread.
-    p.page = MonitorPage(ctrl, sampler=p.sampler, fetch_weather=p.weather,
+    p.page = MonitorPage(ctrl, sampler=p.sampler, fetch=p.weather,
                          clock=p.clock, utcnow=lambda: FIXED_NOW,
                          start_thread=lambda fn: fn())
     return p
@@ -254,7 +254,7 @@ def slow(ctrl):
     """A page with real background threads and a blocking weather fetch."""
     ctrl.config = {"monitor": {"disks": [{"name": "/", "path": "/"}], "weather": LOCATION}}
     s = SimpleNamespace(sampler=FakeSampler(), weather=BlockingWeather(), clock=Clock(), ctrl=ctrl)
-    s.page = MonitorPage(ctrl, sampler=s.sampler, fetch_weather=s.weather,
+    s.page = MonitorPage(ctrl, sampler=s.sampler, fetch=s.weather,
                          clock=s.clock, utcnow=lambda: FIXED_NOW)
     yield s
     s.weather.release.set()

@@ -27,6 +27,10 @@ ICONS = os.path.join(os.path.dirname(__file__), "..", "..", "icons")
 FONT = "/usr/share/fonts/TTF/DejaVuSans.ttf"
 BOLD = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
 WEATHER_KEYS = range(24, 32)
+# Monitor keys whose tiles the Home page shows as well
+CPU_TEMP_KEY = 8
+GPU_TEMP_KEY = 11
+WEATHER_NOW_KEY = 24
 
 
 @dataclass(frozen=True)
@@ -126,10 +130,10 @@ def _system_tiles(s: SystemSample) -> dict[int, Tile]:
     vram_unit = f"of {round(s.vram_total_gb)} GB" if s.vram_total_gb else "GB"
 
     tiles = {
-        8: metric("CPU", s.cpu_temp, _deg, "°C", lv(75, 90)),
+        CPU_TEMP_KEY: metric("CPU", s.cpu_temp, _deg, "°C", lv(75, 90)),
         9: metric("CPU load", s.cpu_load, _int, "%", lv(70, 90), missing_text=DASH),
         10: metric("CPU pwr", s.cpu_power, _int, "W", blue),
-        11: metric("GPU", s.gpu_temp, _deg, "°C", lv(75, 85)),
+        GPU_TEMP_KEY: metric("GPU", s.gpu_temp, _deg, "°C", lv(75, 85)),
         12: metric("GPU load", s.gpu_load, _int, "%", lv(70, 90)),
         13: metric("GPU pwr", s.gpu_power, _int, "W", blue),
         14: metric("VRAM", s.vram_used_gb, lambda v: f"{v:.1f}", vram_unit, vram_color),
@@ -165,7 +169,7 @@ def _weather_tiles(w: Weather | None, now_utc: datetime,
         now_tile = (WeatherTile("Weather", "error.png", DASH, error) if error
                     else WeatherTile("Now", "", DASH, ""))
         return {
-            24: now_tile,
+            WEATHER_NOW_KEY: now_tile,
             25: Tile("Feels like", DASH, "", GREY),
             26: Tile("Humidity", DASH, "", GREY),
             27: Tile("Wind", DASH, "", GREY),
@@ -182,7 +186,7 @@ def _weather_tiles(w: Weather | None, now_utc: datetime,
     rain_today = DASH if today.rain_chance is None else str(today.rain_chance)
     rain_tomorrow = "" if tomorrow.rain_chance is None else f"{tomorrow.rain_chance}% rain"
     return {
-        24: WeatherTile("Now", condition_icon(w.code, w.is_day), _deg(w.temp),
+        WEATHER_NOW_KEY: WeatherTile("Now", condition_icon(w.code, w.is_day), _deg(w.temp),
                         f"H {_deg(today.t_max)} · L {_deg(today.t_min)}"),
         25: Tile("Feels like", _deg(w.feels_like), "°C", WHITE),
         26: Tile("Humidity", str(w.humidity), "%", WHITE),
@@ -210,9 +214,10 @@ def _font(path: str, size: int):
         return ImageFont.load_default(size)
 
 
-def _fit(text: str, path: str, size: int, max_width: int):
-    """The largest font (stepping down by 2 px) whose text fits max_width."""
-    while size > 10:
+def fit_font(text: str, path: str, size: int, max_width: int, min_size: int = 10):
+    """The largest font (stepping down by 2 px) whose text fits max_width,
+    but never smaller than min_size (the text may then overflow)."""
+    while size > min_size:
         font = _font(path, size)
         if font.getlength(text) <= max_width:
             return font
@@ -225,21 +230,21 @@ def render_tile(tile: Tile | WeatherTile) -> Image.Image:
     d = ImageDraw.Draw(img)
     mid = SIZE // 2
     if isinstance(tile, WeatherTile):
-        d.text((mid, 14), tile.label, font=_fit(tile.label, FONT, 17, SIZE - 8),
+        d.text((mid, 14), tile.label, font=fit_font(tile.label, FONT, 17, SIZE - 8),
                fill=GREY, anchor="mm")
         if tile.icon:
             icon = Image.open(os.path.join(ICONS, tile.icon)).convert("RGBA")
             icon.thumbnail((72, 72))
             img.paste(icon, (mid - icon.width // 2, 24), icon)
-        d.text((mid, 110), tile.value, font=_fit(tile.value, BOLD, 30, SIZE - 12),
+        d.text((mid, 110), tile.value, font=fit_font(tile.value, BOLD, 30, SIZE - 12),
                fill=WHITE, anchor="mm")
-        d.text((mid, 133), tile.detail, font=_fit(tile.detail, FONT, 15, SIZE - 8),
+        d.text((mid, 133), tile.detail, font=fit_font(tile.detail, FONT, 15, SIZE - 8),
                fill=GREY, anchor="mm")
         return img
-    d.text((mid, 21), tile.label, font=_fit(tile.label, FONT, 19, SIZE - 8),
+    d.text((mid, 21), tile.label, font=fit_font(tile.label, FONT, 19, SIZE - 8),
            fill=GREY, anchor="mm")
-    d.text((mid, 78), tile.value, font=_fit(tile.value, BOLD, 45, SIZE - 12),
+    d.text((mid, 78), tile.value, font=fit_font(tile.value, BOLD, 45, SIZE - 12),
            fill=tile.color, anchor="mm")
-    d.text((mid, 123), tile.unit, font=_fit(tile.unit, FONT, 18, SIZE - 8),
+    d.text((mid, 123), tile.unit, font=fit_font(tile.unit, FONT, 18, SIZE - 8),
            fill=GREY, anchor="mm")
     return img
