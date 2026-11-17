@@ -2,8 +2,8 @@
 """Home page: an at-a-glance overview plus deck brightness.
 
 Row 2 shows CPU and GPU temperature and the current weather (the Monitor
-page's own tiles); row 3 Spotify play/pause, the artist, and the song as its
-album artwork. The last column, under Restart, holds brightness 33/66/100 %.
+page's own tiles); row 3 Spotify play/pause, the artist (its photo when
+artist photos are on), and the song as its album artwork. The last column, under Restart, holds brightness 33/66/100 %.
 Pressing a temperature or the weather opens the Monitor page; pressing the
 artist or the song opens the Spotify page.
 
@@ -18,23 +18,10 @@ import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from PIL import Image, ImageDraw, ImageOps
-
 from pages import BasePage
+from pages.faces import SPOTIFY_GREEN, PictureFace, render_face
 from pages.monitor.sources import SystemSample, SystemSampler
-from pages.monitor.tiles import (
-    BOLD,
-    CPU_TEMP_KEY,
-    FONT,
-    GPU_TEMP_KEY,
-    GREY,
-    SIZE,
-    WEATHER_NOW_KEY,
-    WHITE,
-    build_tiles,
-    fit_font,
-    render_tile,
-)
+from pages.monitor.tiles import CPU_TEMP_KEY, GPU_TEMP_KEY, WEATHER_NOW_KEY, build_tiles
 from pages.monitor.weather_feed import WeatherFeed
 from pages.spotify import PlayerSnapshot, SpotifyWatcher
 
@@ -44,9 +31,7 @@ CPU_KEY, GPU_KEY, WEATHER_KEY = 8, 9, 10
 PLAY_KEY, ARTIST_KEY, SONG_KEY = 16, 17, 18
 OPENS = {CPU_KEY: "monitor", GPU_KEY: "monitor", WEATHER_KEY: "monitor",
          ARTIST_KEY: "spotify", SONG_KEY: "spotify"}
-SPOTIFY_GREEN = (30, 215, 96)
 BLACK = (0, 0, 0)
-MIN_TEXT = 16  # px at 144; smaller is unreadable once scaled to the XL's 96 px
 _UNSHOWN = object()
 
 
@@ -55,103 +40,27 @@ class PlayFace:
     playing: bool
 
 
-@dataclass(frozen=True)
-class TextFace:
-    label: str
-    text: str
-
-
-@dataclass(frozen=True)
-class SongFace:
-    title: str
-    art: Image.Image | None  # cover art; None until fetched (or none at all)
-
-
-# --- drawing -------------------------------------------------------------------
-
-def _ellipsize(text: str, font, width: int) -> str:
-    if font.getlength(text) <= width:
-        return text
-    while text and font.getlength(text + "…") > width:
-        text = text[:-1]
-    return text.rstrip() + "…"
-
-
-def _wrap(text: str, font, width: int, max_lines: int) -> list[str]:
-    """Greedy word wrap; a too-long last line ends in an ellipsis."""
-    lines, current = [], ""
-    for word in text.split():
-        trial = f"{current} {word}".strip()
-        if current and font.getlength(trial) > width:
-            lines.append(current)
-            current = word
-        else:
-            current = trial
-    lines.append(current)
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        lines[-1] = _ellipsize(lines[-1] + "…", font, width)
-    return lines
-
-
-def _text_image(face: TextFace) -> Image.Image:
-    img = Image.new("RGB", (SIZE, SIZE), "black")
-    d = ImageDraw.Draw(img)
-    mid = SIZE // 2
-    d.text((mid, 21), face.label, font=fit_font(face.label, FONT, 19, SIZE - 8),
-           fill=GREY, anchor="mm")
-    width = SIZE - 12
-    lines = _wrap(face.text, fit_font("", BOLD, 26, width), width, max_lines=3)
-    top = 82 - (len(lines) - 1) * 16
-    for i, line in enumerate(lines):
-        font = fit_font(line, BOLD, 26, width, min_size=MIN_TEXT)
-        d.text((mid, top + i * 32), _ellipsize(line, font, width), font=font,
-               fill=SPOTIFY_GREEN, anchor="mm")
-    return img
-
-
-def _song_image(face: SongFace) -> Image.Image:
-    if face.art is None:
-        return _text_image(TextFace("Song", face.title))
-    img = ImageOps.fit(face.art.convert("RGB"), (SIZE, SIZE))
-    if face.title:
-        d = ImageDraw.Draw(img, "RGBA")
-        d.rectangle([(0, SIZE - 34), (SIZE, SIZE)], fill=(0, 0, 0, 190))
-        font = fit_font(face.title, BOLD, 20, SIZE - 8, min_size=MIN_TEXT)
-        d.text((SIZE // 2, SIZE - 17), _ellipsize(face.title, font, SIZE - 8),
-               font=font, fill=WHITE, anchor="mm")
-    return img
-
-
-def render_face(face) -> Image.Image:
-    """A 144 px key image for a monitor tile, text face or song face."""
-    if isinstance(face, TextFace):
-        return _text_image(face)
-    if isinstance(face, SongFace):
-        return _song_image(face)
-    return render_tile(face)
-
-
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-# --- page ------------------------------------------------------------------------
-
 class HomePage(BasePage):
     def __init__(self, controller, weather=None, sampler=None,
-                 watch_spotify=SpotifyWatcher, utcnow=_utcnow):
+                 watch_spotify=SpotifyWatcher, artist_photos=None, utcnow=_utcnow):
         """weather: the WeatherFeed shared with the Monitor page (one is built
-        from config without it). watch_spotify(on_change) makes the watcher."""
+        from config without it). artist_photos: the ArtistPhotos shared with
+        the Spotify page, or None (off).
+        watch_spotify(on_change, artist_photos=) makes the watcher."""
         super().__init__(controller)
         self.weather = weather or WeatherFeed.from_config(
             controller.config.get("monitor") or {})
+        self.artist_photos = artist_photos
         self._sampler = sampler or SystemSampler()
-        self._spotify = watch_spotify(self._on_spotify)
+        self._spotify = watch_spotify(self._on_spotify, artist_photos=artist_photos)
         self._utcnow = utcnow
 
         self._sample = SystemSample.placeholder([])
-        self._music = (PlayerSnapshot(), None)  # (snapshot, cover art)
+        self._music = (PlayerSnapshot(), None, None)  # (snapshot, cover, artist photo)
         self._shown = {}  # key -> face currently on the deck
         # Draws come from the poll, Spotify listener and key-callback threads.
         # _visible is True from render() until deactivate(); once it is False
@@ -184,7 +93,8 @@ class HomePage(BasePage):
             mpris = self._spotify.mpris
             if mpris is not None:
                 mpris.play_pause()
-                self._music = (self._spotify.snapshot(), self._spotify.art)
+                self._music = (self._spotify.snapshot(), self._spotify.art,
+                               self._spotify.artist_photo)
                 self._draw()  # at once; the listener reports it too
         elif key in OPENS:
             self.ctrl.switch_page(OPENS[key])
@@ -196,7 +106,7 @@ class HomePage(BasePage):
         except Exception as e:  # Home is the start page: never fail it
             print(f"home: Spotify unavailable: {e!r}")
             snap = PlayerSnapshot()
-        self._music = (snap, self._spotify.art)
+        self._music = (snap, self._spotify.art, self._spotify.artist_photo)
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, args=(self._stop,), name="home-poll", daemon=True)
@@ -212,7 +122,7 @@ class HomePage(BasePage):
         self._stop = None
         self._thread = None
         self._spotify.stop()
-        self._music = (PlayerSnapshot(), None)
+        self._music = (PlayerSnapshot(), None, None)
 
     # --- updates ---
 
@@ -236,9 +146,9 @@ class HomePage(BasePage):
         self.weather.refresh_if_due()
         self._draw()
 
-    def _on_spotify(self, snap: PlayerSnapshot, art):
-        """SpotifyWatcher callback, on its listener thread."""
-        self._music = (snap, art)
+    def _on_spotify(self, snap: PlayerSnapshot, art, artist_photo):
+        """SpotifyWatcher callback, on its listener or artist-photo thread."""
+        self._music = (snap, art, artist_photo)
         self._draw()
 
     # --- drawing ---
@@ -247,14 +157,14 @@ class HomePage(BasePage):
         """Every overview key -> what it should show (None: blank)."""
         weather, error = self.weather.view()
         tiles = build_tiles(self._sample, weather, self._utcnow(), weather_error=error)
-        snap, art = self._music
+        snap, art, photo = self._music
         return {
             CPU_KEY: tiles[CPU_TEMP_KEY],
             GPU_KEY: tiles[GPU_TEMP_KEY],
             WEATHER_KEY: tiles[WEATHER_NOW_KEY],
             PLAY_KEY: PlayFace(snap.status == "Playing"),
-            ARTIST_KEY: TextFace("Artist", snap.artist) if snap.artist else None,
-            SONG_KEY: SongFace(snap.title, art) if (snap.title or art) else None,
+            ARTIST_KEY: PictureFace("Artist", snap.artist, photo) if snap.artist else None,
+            SONG_KEY: PictureFace("Song", snap.title, art) if (snap.title or art) else None,
         }
 
     def _draw(self):

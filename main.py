@@ -110,6 +110,7 @@ class DeckController:
             self._release_deck()
 
     def _build_pages(self):
+        from pages.artist_photos import ArtistPhotos
         from pages.home import HomePage
         from pages.hue import HuePage
         from pages.kasa import KasaPage
@@ -118,11 +119,14 @@ class DeckController:
         from pages.spotify import SpotifyPage
         from pages.tapo import TapoPage
 
-        # One weather reading for Home and Monitor: switching doesn't refetch.
+        # Shared by the pages showing them, so switching pages doesn't refetch:
+        # one weather reading (Home, Monitor), one artist-photo cache (Home,
+        # Spotify; None when the optional feature is off).
         weather = WeatherFeed.from_config(self.config.get("monitor") or {})
+        photos = ArtistPhotos.from_config(self.config.get("spotify") or {})
         return {
-            "home": HomePage(self, weather=weather),
-            "spotify": SpotifyPage(self),
+            "home": HomePage(self, weather=weather, artist_photos=photos),
+            "spotify": SpotifyPage(self, artist_photos=photos),
             "hue": HuePage(self),
             "kasa": KasaPage(self),
             "tapo": TapoPage(self),

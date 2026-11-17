@@ -355,3 +355,17 @@ def test_failed_restart_exec_stops_waiting_for_it(controller, monkeypatch):
 def test_home_and_monitor_share_one_weather_feed(controller):
     pages = controller._build_pages()
     assert pages["home"].weather is pages["monitor"].weather
+
+
+def test_home_and_spotify_share_one_artist_photo_cache(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("spotify:\n  artist_art:\n    api_key: k\n")
+    pages = DeckController(str(cfg))._build_pages()
+    assert pages["home"].artist_photos is not None
+    assert pages["home"].artist_photos is pages["spotify"].artist_photos
+
+
+def test_artist_photos_are_off_without_config(controller):
+    pages = controller._build_pages()
+    assert pages["home"].artist_photos is None
+    assert pages["spotify"].artist_photos is None

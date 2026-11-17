@@ -13,7 +13,8 @@ import pytest
 from PIL import Image
 
 from pages import home
-from pages.home import SPOTIFY_GREEN, HomePage, SongFace, TextFace
+from pages.faces import PictureFace
+from pages.home import SPOTIFY_GREEN, HomePage
 from pages.monitor.sources import SystemSample
 from pages.monitor.tiles import GREEN, RED
 from pages.monitor.weather import parse
@@ -25,6 +26,7 @@ LOCATION = {"latitude": 49.63277, "longitude": 6.26459}
 PLAYING = PlayerSnapshot(status="Playing", artist="Zombie Hyperdrive",
                          title="Gigawatt", art_url="https://art/1")
 COVER = Image.new("RGB", (640, 640), (120, 40, 160))
+PHOTO = Image.new("RGB", (144, 144), (90, 90, 90))
 MUSIC_KEYS = {16, 17, 18}
 
 
@@ -68,10 +70,12 @@ class FakeMpris:
 class FakeWatcher:
     """Stands in for SpotifyWatcher; push() plays the listener thread."""
 
-    def __init__(self, on_change):
+    def __init__(self, on_change, artist_photos=None):
         self.on_change = on_change
+        self.artist_photos = artist_photos
         self.snap = PlayerSnapshot()  # Spotify not running
         self.art = None
+        self.artist_photo = None
         self.mpris = None
         self.starts = 0
         self.stops = 0
@@ -91,9 +95,9 @@ class FakeWatcher:
     def snapshot(self):
         return self.snap
 
-    def push(self, snap, art=None):
-        self.snap, self.art = snap, art
-        self.on_change(snap, art)
+    def push(self, snap, art=None, photo=None):
+        self.snap, self.art, self.artist_photo = snap, art, photo
+        self.on_change(snap, art, photo)
 
 
 @pytest.fixture(autouse=True)
@@ -108,11 +112,13 @@ def p(ctrl):
     s.weather = WeatherFeed.from_config(ctrl.config["monitor"], fetch=s.fetch,
                                         start_thread=lambda fn: fn())
 
-    def watch(on_change):
-        s.watchers.append(FakeWatcher(on_change))
+    def watch(on_change, artist_photos=None):
+        s.watchers.append(FakeWatcher(on_change, artist_photos))
         return s.watchers[-1]
 
-    s.page = HomePage(ctrl, weather=s.weather, sampler=s.sampler, watch_spotify=watch)
+    s.photos = object()  # an ArtistPhotos, as far as the page is concerned
+    s.page = HomePage(ctrl, weather=s.weather, sampler=s.sampler, watch_spotify=watch,
+                      artist_photos=s.photos)
     s.spotify = s.watchers[0]
     yield s
     s.page.deactivate()
@@ -212,8 +218,8 @@ def test_playing_track_shows_pause_artist_and_album_art(p):
     p.page.render()
     assert p.ctrl.images[16]["icon"] == "pause.png"
     assert p.ctrl.images[16]["highlight"] == SPOTIFY_GREEN
-    assert shown(p.ctrl, 17) == TextFace("Artist", "Zombie Hyperdrive")
-    assert shown(p.ctrl, 18) == SongFace("Gigawatt", COVER)
+    assert shown(p.ctrl, 17) == PictureFace("Artist", "Zombie Hyperdrive", None)
+    assert shown(p.ctrl, 18) == PictureFace("Song", "Gigawatt", COVER)
 
 
 def test_a_track_change_redraws_only_the_music_keys(p):
@@ -223,7 +229,7 @@ def test_a_track_change_redraws_only_the_music_keys(p):
     p.ctrl.pushes.clear()
     p.spotify.push(PLAYING)  # cover art not fetched yet
     assert set(p.ctrl.pushes) == MUSIC_KEYS
-    assert shown(p.ctrl, 18) == SongFace("Gigawatt", None)
+    assert shown(p.ctrl, 18) == PictureFace("Song", "Gigawatt", None)
     p.ctrl.pushes.clear()
     p.spotify.push(PLAYING, COVER)  # ...and now it is
     assert p.ctrl.pushes == [18]
@@ -236,6 +242,44 @@ def test_play_key_toggles_playback_and_redraws_at_once(p):
     p.page.on_key(16)
     assert p.spotify.mpris.play_pauses == 1
     assert p.ctrl.images[16]["icon"] == "play.png"
+
+
+def test_the_watcher_gets_the_artist_photos(p):
+    assert p.spotify.artist_photos is p.photos
+
+
+def test_artist_key_shows_the_artist_photo(p):
+    p.spotify.snap, p.spotify.art, p.spotify.artist_photo = PLAYING, COVER, PHOTO
+    p.page.activate()
+    p.page.render()
+    assert shown(p.ctrl, 17) == PictureFace("Artist", "Zombie Hyperdrive", PHOTO)
+
+
+def test_an_arriving_artist_photo_redraws_only_the_artist_key(p):
+    p.page.activate()
+    p.page.render()
+    p.spotify.push(PLAYING, COVER)
+    p.ctrl.pushes.clear()
+    p.spotify.push(PLAYING, COVER, PHOTO)
+    assert p.ctrl.pushes == [17]
+
+
+def test_works_with_the_real_spotify_watcher(ctrl):
+    """The fakes above can't catch a callback signature mismatch; this can."""
+    from pages.spotify import SpotifyWatcher
+    from tests.test_spotify_watcher import FakeMpris, wait_until
+
+    mpris = FakeMpris(PlayerSnapshot())  # nothing playing yet
+    page = HomePage(ctrl, sampler=FakeSampler(), watch_spotify=lambda on_change, **kw:
+                    SpotifyWatcher(on_change, connect=lambda: mpris,
+                                   fetch_art=lambda url: COVER, **kw))
+    try:
+        page.activate()
+        page.render()
+        mpris.props_changed(**vars(PLAYING))  # only the callback can draw this
+        assert wait_until(lambda: shown(ctrl, 18) == PictureFace("Song", "Gigawatt", COVER))
+    finally:
+        page.deactivate()
 
 
 @pytest.mark.parametrize("key", [17, 18])
@@ -303,20 +347,3 @@ def test_render_redraws_everything_again(p):
     p.ctrl.pushes.clear()
     p.page.render()  # e.g. the Home nav key pressed again
     assert {8, 9, 10, 15, 16, 17, 18, 23, 31} <= set(p.ctrl.pushes)
-
-
-# --- drawing the faces for real -------------------------------------------------
-
-@pytest.mark.parametrize("face", [
-    TextFace("Artist", "Zombie Hyperdrive"),
-    TextFace("Artist", "A Band With A Name Far Too Long To Fit On One Small Key"),
-    TextFace("Artist", "Supercalifragilisticexpialidocious"),
-    SongFace("Gigawatt", COVER),
-    SongFace("A title that is much too long for the strip", COVER),
-    SongFace("No cover yet", None),
-])
-def test_home_faces_render_as_key_images(face, monkeypatch):
-    monkeypatch.undo()  # the real render_face
-    img = home.render_face(face)
-    assert img.size == (144, 144)
-    assert img.getbbox() is not None  # not an all-black key

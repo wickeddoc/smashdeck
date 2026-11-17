@@ -37,6 +37,15 @@ spotify:
       uri: "spotify:playlist:xxxxx"
     - name: "Work"
       uri: "spotify:playlist:yyyyy"
+  # Optional: the artist's photo on the artist keys (Home and Spotify page),
+  # from fanart.tv. The artist name is sent to musicbrainz.org to find its
+  # ID, then fanart.tv is asked for the photo; photos are cached on disk.
+  # Needs a free fanart.tv project key: https://fanart.tv/get-an-api-key/
+  # artist_art:
+  #   enabled: true                         # default when this section exists
+  #   api_key: "your-project-key"           # required
+  #   client_key: "your-personal-key"       # optional: newer photos sooner
+  #   cache_dir: "~/.cache/smashdeck/artists"   # optional; this is the default
 
 monitor:
   # Up to 2 disks, shown on keys 17-18 as "Disk <name>" (% full).

@@ -20,6 +20,8 @@ SmashDeck renders icon + label keys onto a Stream Deck XL and routes key presses
 
 The Spotify page renders the current track's album cover on key 31 and updates automatically on track changes (via `org.mpris.MediaPlayer2.spotify` PropertiesChanged signals). Up to 5 playlists from `config.yaml` are shown on row 4 and start playback via MPRIS2 `OpenUri` — no Spotify credentials needed.
 
+Optionally, the artist keys on Home and the Spotify page show the artist's photo from [fanart.tv](https://fanart.tv). Set `spotify.artist_art.api_key` in `config.yaml` to a free fanart.tv project key, and optionally `client_key` to your personal key. SmashDeck finds the artist's MusicBrainz ID by exact name, fetches the most-liked square artist thumb, and caches it in `~/.cache/smashdeck/artists/`. A found photo is kept until you delete the cache. "No photo" is retried after a week, network trouble after ten minutes. Without a photo, the artist key shows the name as before.
+
 ## Requirements
 
 - A connected Stream Deck XL (32 keys, 4×8). Smaller models (Original / Mini / Mk.2) work too — icons are auto-scaled by the Stream Deck library at render time.
@@ -92,12 +94,13 @@ Per-page content:
 
 - **Home** — an overview. Row 2: CPU and GPU temperature and the current
   weather (the Monitor page's tiles; press one to open Monitor). Row 3:
-  Spotify play/pause, the artist, and the song as its album artwork with the
-  title on it (press artist or song to open Spotify). Brightness 33/66/100 %
+  Spotify play/pause, the artist (its photo, if artist photos are set up), and
+  the song as its album artwork with the title on it (press artist or song to
+  open Spotify). Brightness 33/66/100 %
   in the last column (keys 15, 23, 31), under Restart. Everything updates
   live while Home is visible.
-- **Spotify** — controls on row 2, artist/title labels, playlists on keys
-  24–28, cover art on key 31
+- **Spotify** — controls on row 2, artist (photo, if set up) and title on
+  keys 15 and 23, playlists on keys 24–28, cover art on key 31
 - **Hue** — rooms on row 2, lights of the selected room on row 3, scenes on
   row 4; an unreachable bridge shows an error key instead of crashing
 - **Kasa / Tapo** — devices on row 2, tap to toggle
@@ -113,6 +116,8 @@ pages/
   __init__.py      BasePage ABC (render / on_key / activate / deactivate / clear)
   home.py          HomePage — overview (temperatures, weather, Spotify) and
                    brightness keys
+  faces.py         text and picture-with-caption key faces (Home, Spotify)
+  artist_photos.py optional fanart.tv artist photos (via MusicBrainz), cached
   spotify.py       SpotifyPage — DBus/MPRIS2 via jeepney: play/pause, next,
                    prev, shuffle, repeat, volume, playlists (OpenUri), cover
                    art on key 31; SpotifyWatcher, the PropertiesChanged

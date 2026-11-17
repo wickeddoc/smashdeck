@@ -21,6 +21,7 @@ from jeepney.io.threading import open_dbus_connection, DBusRouter
 from PIL import Image
 
 from pages import BasePage
+from pages.faces import SPOTIFY_GREEN, PictureFace, render_face
 
 BUTTON_POSITION_VOLUME_UP = 13
 BUTTON_POSITION_VOLUME_DOWN = 14
@@ -68,7 +69,8 @@ class PlayerSnapshot:
     status: str = "Stopped"         # "Playing" / "Paused" / "Stopped"
     shuffle: bool = False
     loop: str = "None"              # "None" / "Track" / "Playlist"
-    artist: str = ""
+    artist: str = ""                # all artists, comma-separated
+    lead_artist: str = ""           # the first one (whose photo is shown)
     title: str = ""
     album: str = ""
     volume: float = 0.5
@@ -131,8 +133,9 @@ class SpotifyMpris:
                 artist_val = self._unwrap(meta.get("xesam:artist"))
                 if isinstance(artist_val, list):
                     snap.artist = ", ".join(str(a) for a in artist_val)
+                    snap.lead_artist = str(artist_val[0]) if artist_val else ""
                 elif isinstance(artist_val, str):
-                    snap.artist = artist_val
+                    snap.artist = snap.lead_artist = artist_val
 
                 title_val = self._unwrap(meta.get("xesam:title"))
                 if isinstance(title_val, str):
@@ -239,21 +242,35 @@ def fetch_art(url: str) -> Optional[Image.Image]:
         return None
 
 
+def _start_daemon(fn):
+    threading.Thread(target=fn, name="artist-photo", daemon=True).start()
+
+
 class SpotifyWatcher:
     """Follows Spotify while started: one MPRIS connection plus a listener
-    thread that calls ``on_change(snapshot, cover_art)`` whenever the player
-    state or the cover art changes (track skipped in the Spotify app, play
-    pressed elsewhere, Spotify restarted). Used by the Spotify and Home pages.
+    thread that calls ``on_change(snapshot, cover_art, artist_photo)``
+    whenever the player state, the cover art or the artist photo changes
+    (track skipped in the Spotify app, play pressed elsewhere, Spotify
+    restarted). Used by the Spotify and Home pages.
 
-    on_change runs on the listener thread and is never called once stop()
-    has begun. The cover art is fetched on that thread too, so start() never
-    waits on the network.
+    The cover art is fetched on the listener thread, so start() never waits
+    on the network. With ``artist_photos`` (an ArtistPhotos), a cached photo
+    of the lead artist comes with the track's report; an uncached one is
+    looked up on a short-lived thread and reported when it arrives, so a slow
+    lookup never holds up the listener or stop(). on_change calls never
+    overlap, and none is made or still running once stop() returns.
     """
 
-    def __init__(self, on_change, connect=SpotifyMpris, fetch_art=fetch_art):
+    def __init__(self, on_change, connect=SpotifyMpris, fetch_art=fetch_art,
+                 artist_photos=None, start_thread=_start_daemon):
         self._on_change = on_change
         self._connect = connect
         self._fetch_art = fetch_art
+        self._photos = artist_photos
+        self._start_thread = start_thread
+        self._report_lock = threading.Lock()  # one on_change at a time
+        self._artist = ""  # lead artist of the last report
+        self._artist_photo: Optional[Image.Image] = None
         self._mpris: Optional[SpotifyMpris] = None
         self._stop: Optional[threading.Event] = None
         self._thread: Optional[threading.Thread] = None
@@ -272,6 +289,11 @@ class SpotifyWatcher:
     def art(self) -> Optional[Image.Image]:
         """Cover art of the current track, once fetched."""
         return self._art
+
+    @property
+    def artist_photo(self) -> Optional[Image.Image]:
+        """Photo of the current lead artist, once found (artist_photos only)."""
+        return self._artist_photo
 
     def start(self) -> PlayerSnapshot:
         """Connect, subscribe and start listening; returns the current state.
@@ -300,6 +322,8 @@ class SpotifyWatcher:
     def stop(self):
         if self._stop is not None:
             self._stop.set()
+        with self._report_lock:
+            pass  # wait out an on_change in progress; later ones see the stop
         if self._props_q is not None:
             try:
                 self._props_q.put_nowait(None)  # wake the listener now
@@ -322,6 +346,8 @@ class SpotifyWatcher:
         self._last = None
         self._art_url = ""
         self._art = None
+        self._artist = ""
+        self._artist_photo = None
 
     def snapshot(self) -> PlayerSnapshot:
         """The player state right now, which the caller is about to show: the
@@ -344,14 +370,50 @@ class SpotifyWatcher:
             return True
         return False
 
+    def _refresh_artist(self, snap: PlayerSnapshot):
+        """On a new lead artist, take its photo from the cache (or none yet).
+        Returns (photo changed, artist to look up or None). Call with
+        _report_lock held: the lookup thread updates the same state."""
+        name = snap.lead_artist
+        if name == self._artist:
+            return False, None
+        before = self._artist_photo
+        self._artist, self._artist_photo, lookup = name, None, None
+        if name and self._photos is not None:
+            known, photo = self._photos.known(name)
+            if known:
+                self._artist_photo = photo
+            else:
+                lookup = name
+        return self._artist_photo is not before, lookup
+
     def _report(self, stop: threading.Event, snap: PlayerSnapshot, force: bool):
-        art_updated = self._refresh_art(snap)
-        changed = force or art_updated or snap != self._last
-        self._last = snap
-        # The stop check guards against stop() starting during a slow cover
-        # fetch: the page may no longer be the one on the deck.
-        if changed and not stop.is_set():
-            self._on_change(snap, self._art)
+        art_updated = self._refresh_art(snap)  # network: outside the lock
+        with self._report_lock:
+            photo_changed, lookup = self._refresh_artist(snap)
+            changed = force or art_updated or photo_changed or snap != self._last
+            self._last = snap
+            # The stop check guards against stop() starting during a slow
+            # cover fetch: the page may no longer be the one on the deck.
+            if changed and not stop.is_set():
+                self._on_change(snap, self._art, self._artist_photo)
+        if lookup is not None:
+            self._start_thread(lambda: self._look_up_artist(stop, lookup))
+
+    def _look_up_artist(self, stop: threading.Event, name: str):
+        """Runs on its own thread: fetch the photo, report it if still wanted."""
+        try:
+            photo = self._photos.lookup(name)
+        except Exception:
+            traceback.print_exc()
+            return
+        if photo is None:
+            return
+        with self._report_lock:
+            if stop.is_set() or self._artist != name:
+                return  # stopped, or another artist is playing by now
+            self._artist_photo = photo
+            self._on_change(self._last, self._art, photo)
 
     def _listen(self, stop, mpris, props_q, name_q):
         """Block on the filter queues; report when state actually changes."""
@@ -392,14 +454,16 @@ class SpotifyWatcher:
 
 
 class SpotifyPage(BasePage):
-    def __init__(self, controller, watcher=None):
+    def __init__(self, controller, watcher=None, artist_photos=None):
+        """artist_photos: the ArtistPhotos shared with Home, or None (off)."""
         super().__init__(controller)
-        self._watcher = watcher or SpotifyWatcher(self._on_change)
+        self.artist_photos = artist_photos
+        self._watcher = watcher or SpotifyWatcher(self._on_change, artist_photos=artist_photos)
         self._mpris: Optional[SpotifyMpris] = None
         spotify_cfg = controller.config.get("spotify", {})
         self._playlists = spotify_cfg.get("playlists", [])[: len(PLAYLIST_KEYS)]
 
-    def _on_change(self, snap: PlayerSnapshot, art):
+    def _on_change(self, snap: PlayerSnapshot, art, artist_photo):
         self.render(snap)
 
     def activate(self):
@@ -441,8 +505,12 @@ class SpotifyPage(BasePage):
         self.ctrl.set_key_image(BUTTON_POSITION_VOLUME_DOWN, "vol_down.png")
         self.ctrl.set_key_image(BUTTON_POSITION_VOLUME_UP, "vol_up.png")
 
-        if snap.artist:
-            self.ctrl.set_key_image(15, label=snap.artist[:12], color=(30, 215, 96))
+        photo = self._watcher.artist_photo
+        if snap.artist and photo is not None:
+            face = PictureFace("Artist", snap.artist, photo)
+            self.ctrl.set_key_image(15, pil_image=render_face(face))
+        elif snap.artist:
+            self.ctrl.set_key_image(15, label=snap.artist[:12], color=SPOTIFY_GREEN)
         if snap.title:
             self.ctrl.set_key_image(23, label=snap.title[:12], color=(30, 215, 96))
         for i, pl in enumerate(self._playlists):

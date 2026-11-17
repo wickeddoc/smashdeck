@@ -1,0 +1,30 @@
+{
+  "name": "Daft Punk",
+  "mbid_id": "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
+  "artistbackground": [
+    {
+      "id": "11",
+      "url": "https://assets.fanart.tv/fanart/music/056e4f3e-d505-4dad-8ec1-d04f521cbb56/artistbackground/daft-punk-11.jpg",
+      "likes": "9"
+    }
+  ],
+  "artistthumb": [
+    {
+      "id": "21",
+      "url": "https://assets.fanart.tv/fanart/music/056e4f3e-d505-4dad-8ec1-d04f521cbb56/artistthumb/daft-punk-21.jpg",
+      "likes": "2"
+    },
+    {
+      "id": "22",
+      "url": "https://assets.fanart.tv/fanart/music/056e4f3e-d505-4dad-8ec1-d04f521cbb56/artistthumb/daft-punk-22.jpg",
+      "likes": "5"
+    }
+  ],
+  "hdmusiclogo": [
+    {
+      "id": "31",
+      "url": "https://assets.fanart.tv/fanart/music/056e4f3e-d505-4dad-8ec1-d04f521cbb56/hdmusiclogo/daft-punk-31.png",
+      "likes": "4"
+    }
+  ]
+}
