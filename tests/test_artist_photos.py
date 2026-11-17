@@ -6,11 +6,13 @@ import io
 import json
 import os
 import urllib.error
+import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from PIL import Image
 
+from pages import artist_photos as ap
 from pages.artist_photos import ArtistPhotos
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -246,3 +248,122 @@ def test_a_corrupt_cache_entry_is_looked_up_again(env):
         (env.cache / name).write_bytes(b"garbage")
     assert env.photos().known("Daft Punk") == (False, None)
     assert env.photos().lookup("Daft Punk") is not None
+
+
+# --- hardening: fetch only what fanart.tv and MusicBrainz should serve ----------
+
+
+def thumbs(*entries):
+    return json.dumps({"name": "Daft Punk", "artistthumb": list(entries)}).encode()
+
+
+@pytest.mark.parametrize("url", [
+    "http://assets.fanart.tv/fanart/daft-punk-22.jpg",  # not https
+    "https://192.168.1.1/daft-punk-22.jpg",  # the LAN
+    "file:///etc/passwd",
+    "https://fanart.tv.evil.example/daft-punk-22.jpg",  # look-alike hosts
+    "https://evilfanart.tv/daft-punk-22.jpg",
+])
+def test_image_urls_outside_fanart_tv_are_never_fetched(env, url):
+    env.http.fanart = thumbs({"url": url, "likes": "9"})
+    assert env.photos().lookup("Daft Punk") is None
+    assert env.http.hosts() == ["musicbrainz.org", "webservice.fanart.tv"]
+
+
+def test_a_bad_thumb_url_does_not_hide_a_good_one(env):
+    env.http.fanart = thumbs(
+        {"url": "https://192.168.1.1/daft-punk-22.jpg", "likes": "9"},
+        {"url": "https://assets.fanart.tv/fanart/daft-punk-21.jpg", "likes": "1"})
+    assert env.photos().lookup("Daft Punk").getpixel((72, 72)) == BLUE
+
+
+def test_images_on_any_fanart_tv_host_are_fine(env):
+    # fanart.tv has changed its image URLs before (late 2025)
+    env.http.fanart = thumbs({"url": "https://images.fanart.tv/music/daft-punk-22.jpg"})
+    assert env.photos().lookup("Daft Punk") is not None
+
+
+def test_an_image_too_large_to_decode_safely_is_refused(env, monkeypatch):
+    monkeypatch.setattr(ap, "MAX_IMAGE_PIXELS", 999 * 999)  # the fake thumbs are 1000²
+    assert env.photos().lookup("Daft Punk") is None
+
+
+def test_musicbrainz_ids_that_are_not_ids_are_never_sent_to_fanart(env):
+    found = json.loads(env.http.musicbrainz)
+    found["artists"][0]["id"] = "../../v3/movies/x?"
+    env.http.musicbrainz = json.dumps(found).encode()
+    assert env.photos().lookup("Daft Punk") is None
+    assert env.http.hosts() == ["musicbrainz.org"]
+
+
+def test_a_tampered_id_in_the_cache_is_not_used(env):
+    env.http.fanart = not_found()
+    env.photos().lookup("Daft Punk")  # caches the MusicBrainz ID
+    (entry,) = env.cache.glob("*.json")
+    data = json.loads(entry.read_text())
+    data["mbid"] = "../../v3/movies/x?"
+    entry.write_text(json.dumps(data))
+    env.clock.t += 7 * DAY
+    env.http.requests.clear()
+    env.photos().lookup("Daft Punk")
+    assert env.http.hosts()[0] == "musicbrainz.org"  # asked again, not trusted
+    assert all("movies" not in url for url, _ in env.http.requests)
+
+
+class FakeResponse:
+    def __init__(self, size):
+        self.size = size
+
+    def read(self, amount=-1):
+        return b"x" * (self.size if amount < 0 else min(amount, self.size))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeOpener:
+    def __init__(self, size):
+        self.size = size
+        self.opened = []
+
+    def open(self, req, timeout):
+        self.opened.append(req.full_url)
+        return FakeResponse(self.size)
+
+
+def test_responses_over_10_mb_are_refused(monkeypatch):
+    monkeypatch.setattr(ap, "_OPENER", FakeOpener(ap.MAX_RESPONSE + 1))
+    with pytest.raises(ValueError):
+        ap._http_get("https://assets.fanart.tv/x.jpg", {})
+    monkeypatch.setattr(ap, "_OPENER", FakeOpener(100))
+    assert len(ap._http_get("https://assets.fanart.tv/x.jpg", {})) == 100
+
+
+@pytest.mark.parametrize("url", ["http://musicbrainz.org/ws/2/artist/", "file:///etc/passwd",
+                                 "https://192.168.1.1/", "https://example.com/x.jpg"])
+def test_requests_only_go_to_musicbrainz_and_fanart_over_https(monkeypatch, url):
+    opener = FakeOpener(10)
+    monkeypatch.setattr(ap, "_OPENER", opener)
+    with pytest.raises(ValueError):
+        ap._http_get(url, {})
+    assert opener.opened == []
+
+
+@pytest.mark.parametrize("target, allowed", [
+    ("https://assets.fanart.tv/fanart/x.jpg", True),
+    ("https://musicbrainz.org/ws/2/artist/?query=x", True),
+    ("http://assets.fanart.tv/fanart/x.jpg", False),
+    ("http://192.168.1.1/", False),
+    ("https://example.com/", False),
+])
+def test_redirects_may_not_leave_musicbrainz_or_fanart(target, allowed):
+    handler = ap._AllowlistRedirects()
+    req = urllib.request.Request("https://assets.fanart.tv/fanart/a.jpg")
+    if allowed:
+        assert handler.redirect_request(req, None, 302, "Found", {}, target) is not None
+    else:
+        with pytest.raises(urllib.error.HTTPError):
+            handler.redirect_request(req, None, 302, "Found", {}, target)

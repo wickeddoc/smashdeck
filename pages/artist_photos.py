@@ -9,6 +9,12 @@ likes -> scaled to key size and cached as ``<key>.png`` next to a
 photo" is remembered for a week; network trouble is retried after ten
 minutes, in memory only.
 
+Hardening: requests go only to musicbrainz.org and fanart.tv over https
+(redirects included), so a bad image URL in a fanart.tv answer can't make
+SmashDeck fetch from the LAN or a file. Responses are capped at
+MAX_RESPONSE bytes and images at MAX_IMAGE_PIXELS before decoding, and
+MusicBrainz IDs must be UUIDs before they go into a fanart.tv URL.
+
 known() is cheap (memory or disk, no network); lookup() does the HTTP calls
 and blocks, so callers run it off the page threads (see SpotifyWatcher).
 One instance is shared by the Home and Spotify pages.
@@ -27,6 +33,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -45,12 +52,44 @@ MUSICBRAINZ_INTERVAL = 1.0  # s; MusicBrainz allows one request per second
 NOT_FOUND_TTL = 7 * 24 * 60 * 60  # s to remember "no photo"
 RETRY_AFTER = 10 * 60  # s after network trouble
 TIMEOUT = 10  # s per HTTP request
+MAX_RESPONSE = 10 * 1024 * 1024  # bytes; artist thumbs are well under 1 MB
+MAX_IMAGE_PIXELS = 25_000_000  # artist thumbs are about 1000 x 1000
+_MBID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _is_fanart(url: str) -> bool:
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and (host == "fanart.tv" or host.endswith(".fanart.tv"))
+
+
+def _allowed(url: str) -> bool:
+    """Only MusicBrainz and fanart.tv, only over https."""
+    parts = urlsplit(url)
+    return _is_fanart(url) or (parts.scheme == "https" and parts.hostname == "musicbrainz.org")
+
+
+class _AllowlistRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _allowed(newurl):
+            host = urlsplit(newurl).hostname
+            raise urllib.error.HTTPError(newurl, code, f"redirect to {host!r} refused",
+                                         headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_AllowlistRedirects)
 
 
 def _http_get(url: str, headers: dict) -> bytes:
+    if not _allowed(url):
+        raise ValueError(f"refusing to fetch from {urlsplit(url).hostname!r}")
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        return resp.read()
+    with _OPENER.open(req, timeout=TIMEOUT) as resp:
+        data = resp.read(MAX_RESPONSE + 1)
+    if len(data) > MAX_RESPONSE:
+        raise ValueError(f"response over {MAX_RESPONSE} bytes")
+    return data
 
 
 def _default_cache_dir() -> Path:
@@ -148,6 +187,8 @@ class ArtistPhotos:
             if known:  # e.g. another watcher's lookup just finished
                 return photo
             mbid = (self._read_entry(key) or {}).get("mbid")
+            if not (isinstance(mbid, str) and _MBID.fullmatch(mbid)):
+                mbid = None  # missing, or a tampered cache entry: ask again
             try:
                 mbid = mbid or self._musicbrainz_id(artist)
                 photo = self._fanart_photo(mbid) if mbid else None
@@ -185,7 +226,8 @@ class ArtistPhotos:
             names = [candidate.get("name") or ""]
             names += [alias.get("name") or "" for alias in candidate.get("aliases") or []]
             if any(name.strip().casefold() == wanted for name in names):
-                return candidate.get("id")
+                mbid = candidate.get("id")
+                return mbid if isinstance(mbid, str) and _MBID.fullmatch(mbid) else None
         return None
 
     def _fanart_photo(self, mbid: str):
@@ -196,11 +238,14 @@ class ArtistPhotos:
         if body is None:  # fanart.tv has nothing for this artist
             return None
         art = json.loads(body)
-        thumbs = [t for t in art.get("artistthumb") or [] if t.get("url")]
+        thumbs = [t for t in art.get("artistthumb") or []
+                  if isinstance(t, dict) and _is_fanart(str(t.get("url") or ""))]
         if not thumbs:
             return None
         best = max(thumbs, key=_likes)  # first of equals: fanart.tv's order
-        with Image.open(io.BytesIO(self._get(best["url"]))) as img:
+        with Image.open(io.BytesIO(self._get(best["url"]))) as img:  # reads the header only
+            if img.width * img.height > MAX_IMAGE_PIXELS:
+                return None  # too big to decode safely: treat as no photo
             return ImageOps.fit(img.convert("RGB"), (SIZE, SIZE))
 
     # --- cache ---
