@@ -7,7 +7,9 @@ photo beats a wrong one) -> fanart.tv's square "artistthumb" with the most
 likes -> scaled to key size and cached as ``<key>.png`` next to a
 ``<key>.json`` entry. A found photo is kept until the cache is deleted; "no
 photo" is remembered for a week; network trouble is retried after ten
-minutes, in memory only.
+minutes, in memory only. A 503 (MusicBrainz says "currently busy" under
+load) is first asked again after its short Retry-After, up to BUSY_RETRIES
+times.
 
 Hardening: requests go only to musicbrainz.org and fanart.tv over https
 (redirects included), so a bad image URL in a fanart.tv answer can't make
@@ -52,6 +54,8 @@ MUSICBRAINZ_INTERVAL = 1.0  # s; MusicBrainz allows one request per second
 NOT_FOUND_TTL = 7 * 24 * 60 * 60  # s to remember "no photo"
 RETRY_AFTER = 10 * 60  # s after network trouble
 TIMEOUT = 10  # s per HTTP request
+BUSY_RETRIES = 2  # extra tries after a 503, waiting its Retry-After
+BUSY_WAIT_MAX = 5.0  # s; never wait longer than this per retry
 MAX_RESPONSE = 10 * 1024 * 1024  # bytes; artist thumbs are well under 1 MB
 MAX_IMAGE_PIXELS = 25_000_000  # artist thumbs are about 1000 x 1000
 _MBID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -111,6 +115,16 @@ class ServiceError(Exception):
 
     def __init__(self, host: str, error: Exception):
         super().__init__(f"{host}: {error!r}")
+
+
+def _retry_after(error: urllib.error.HTTPError) -> float:
+    """Seconds to wait before asking a busy service again: its Retry-After,
+    kept between 1 s (MusicBrainz's one request per second) and BUSY_WAIT_MAX."""
+    try:
+        seconds = float((error.headers or {}).get("Retry-After"))
+    except (TypeError, ValueError):
+        seconds = 1.0
+    return max(1.0, min(seconds, BUSY_WAIT_MAX))
 
 
 def _likes(thumb: dict) -> int:
@@ -202,16 +216,23 @@ class ArtistPhotos:
     # --- network ---
 
     def _get(self, url: str, missing_ok: bool = False) -> bytes | None:
-        """The response body; None for a 404 when missing_ok. Failures are
-        raised as ServiceError naming the host."""
-        try:
-            return self._http(url, {"User-Agent": USER_AGENT})
-        except urllib.error.HTTPError as e:
-            if missing_ok and e.code == 404:
-                return None
-            raise ServiceError(urlsplit(url).hostname, e) from None
-        except Exception as e:
-            raise ServiceError(urlsplit(url).hostname, e) from None
+        """The response body; None for a 404 when missing_ok. A 503 is
+        asked again after its Retry-After; failures are raised as
+        ServiceError naming the host."""
+        host = urlsplit(url).hostname
+        for attempt in range(BUSY_RETRIES + 1):
+            try:
+                return self._http(url, {"User-Agent": USER_AGENT})
+            except urllib.error.HTTPError as e:
+                if missing_ok and e.code == 404:
+                    return None
+                if e.code == 503 and attempt < BUSY_RETRIES:
+                    self._sleep(_retry_after(e))
+                    continue
+                raise ServiceError(host, e) from None
+            except Exception as e:
+                raise ServiceError(host, e) from None
+        raise AssertionError("unreachable")
 
     def _musicbrainz_id(self, artist: str) -> str | None:
         wait = self._musicbrainz_ready - self._clock()

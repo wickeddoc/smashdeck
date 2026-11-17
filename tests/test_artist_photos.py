@@ -41,12 +41,15 @@ class FakeHttp:
         self.fanart = fixture("fanart_music.json")
         self.images = {"daft-punk-21.jpg": png(BLUE), "daft-punk-22.jpg": png(RED)}
         self.fail = {}  # host -> exception to raise
+        self.flaky = {}  # host -> exceptions to raise first, one per request
 
     def __call__(self, url, headers):
         self.requests.append((url, headers))
         host = urlsplit(url).hostname
         if host in self.fail:
             raise self.fail[host]
+        if self.flaky.get(host):
+            raise self.flaky[host].pop(0)
         if host == "musicbrainz.org":
             return self.musicbrainz
         if host == "webservice.fanart.tv":
@@ -367,3 +370,39 @@ def test_redirects_may_not_leave_musicbrainz_or_fanart(target, allowed):
     else:
         with pytest.raises(urllib.error.HTTPError):
             handler.redirect_request(req, None, 302, "Found", {}, target)
+
+
+# --- a busy service (MusicBrainz answers 503 "currently busy" under load) ----
+
+def busy(retry_after="1"):
+    headers = {"Retry-After": retry_after} if retry_after else {}
+    return urllib.error.HTTPError("https://musicbrainz.org/ws/2/artist/", 503,
+                                  "Service Temporarily Unavailable", headers, None)
+
+
+def test_a_busy_service_is_asked_again_after_its_retry_after(env):
+    env.http.flaky["musicbrainz.org"] = [busy(), busy()]
+    assert env.photos().lookup("Daft Punk") is not None
+    assert env.http.hosts()[:3] == ["musicbrainz.org"] * 3
+    assert env.clock.slept == [1.0, 1.0]
+
+
+def test_a_service_busy_three_times_is_left_for_ten_minutes(env):
+    env.http.flaky["musicbrainz.org"] = [busy(), busy(), busy()]
+    photos = env.photos()
+    assert photos.lookup("Daft Punk") is None
+    assert env.http.hosts() == ["musicbrainz.org"] * 3
+    assert photos.known("Daft Punk") == (True, None)
+
+
+@pytest.mark.parametrize("retry_after, waited", [(None, 1.0), ("120", 5.0), ("soon", 1.0)])
+def test_the_wait_before_asking_again_is_short(env, retry_after, waited):
+    env.http.flaky["webservice.fanart.tv"] = [busy(retry_after)]
+    assert env.photos().lookup("Daft Punk") is not None
+    assert env.clock.slept == [waited]
+
+
+def test_other_errors_are_not_retried(env):
+    env.http.flaky["musicbrainz.org"] = [urllib.error.URLError("timed out")]
+    assert env.photos().lookup("Daft Punk") is None
+    assert env.http.hosts() == ["musicbrainz.org"]
