@@ -2,6 +2,29 @@
 
 A Python app that turns an [Elgato Stream Deck XL](https://www.elgato.com/stream-deck-xl) into a desktop home-automation controller.
 
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/page_home.jpg" alt="Home page on the Stream Deck XL: CPU and GPU temperature, weather now and tomorrow, Spotify play/pause, artist photo and album cover, brightness keys">
+      <br><b>Home</b>: temperatures, weather, what's playing, brightness
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/page_spotify.jpg" alt="Spotify page: playback and volume controls, artist photo, title, two playlist keys and the album cover">
+      <br><b>Spotify</b>: controls, artist, title, playlists, cover
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/page_hue.jpg" alt="Hue page: rooms on row 2, the lights of the selected room on row 3, scenes on row 4">
+      <br><b>Hue</b>: rooms, lights of the selected room, scenes
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/page_monitor.jpg" alt="Monitor page: CPU, GPU, RAM, disk and network metrics on rows 2 and 3, weather on row 4">
+      <br><b>Monitor</b>: PC metrics and weather
+    </td>
+  </tr>
+</table>
+
 ## What it does
 
 SmashDeck renders icon + label keys onto a Stream Deck XL and routes key presses to per-page handlers. The top row is a persistent navigation bar; the rest of the deck is owned by whichever page is active.
@@ -137,6 +160,8 @@ deploy/            systemd user service for desktop login
   uninstall.sh     stop, disable, remove it
   smashdeck.service.in  unit template (paths filled in by install.sh)
   70-streamdeck.rules   udev rule granting the seat user deck access
+docs/screenshots/  photos of the running deck; reframe.py squares up new ones
+                   and strips their EXIF (see its docstring)
 tests/             pytest suite (FakeController/FakeDeck, no hardware needed)
 icons/             144×144 PNG key icons (XL native; auto-downscaled for
                    smaller decks)
